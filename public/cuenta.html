@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mi cuenta · Teatro</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=Martian+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .cuenta-wrap { max-width: 960px; margin: 0 auto; padding: 32px 16px 80px; }
+
+  /* Header */
+  .acct-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+  .acct-head h1 { font-size: clamp(26px, 5vw, 38px); letter-spacing: -0.02em; }
+  .acct-meta { color: var(--text-dim); font-size: 14px; margin-top: 4px; }
+  .acct-meta a { color: var(--text-dim); }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 28px; }
+  .stat { background: var(--surface); border: 1px solid var(--surface-2); border-radius: 12px; padding: 18px 16px; }
+  .stat .num { font-size: clamp(22px, 4vw, 34px); font-weight: 700; line-height: 1.1; }
+  .stat .lbl { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim); margin-top: 6px; }
+
+  /* Body: sidebar + panel */
+  .body { display: grid; grid-template-columns: 190px 1fr; gap: 28px; }
+  .menu-label { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim); margin-bottom: 10px; }
+  .menu { display: flex; flex-direction: column; gap: 2px; }
+  .menu button {
+    justify-content: flex-start; text-align: left; background: transparent; color: var(--text-dim);
+    border-radius: 8px; padding: 0 12px; min-height: 44px; font-weight: 500; width: 100%;
+  }
+  .menu button.active { background: var(--surface-2); color: var(--text); }
+  .menu button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .menu .fase { font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); margin-left: 6px; }
+
+  .section-head { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim); margin: 0 0 14px; }
+
+  /* Tarjeta de boleto */
+  .ticket-card {
+    display: flex; align-items: center; gap: 16px;
+    background: var(--surface); border: 1px solid var(--surface-2); border-radius: 12px;
+    padding: 14px; margin-bottom: 10px;
+  }
+  .ticket-card .qr {
+    width: 74px; height: 74px; border-radius: 8px; background: #fff; flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .ticket-card .qr img { width: 100%; height: 100%; object-fit: contain; }
+  .ticket-card .info { flex: 1 1 auto; min-width: 0; }
+  .ticket-card .title { font-weight: 600; font-size: 16px; }
+  .ticket-card .meta { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin-top: 4px; }
+
+  /* Historial */
+  .hist-row { display: flex; gap: 16px; padding: 12px 2px; border-bottom: 1px solid var(--surface-2); align-items: baseline; }
+  .hist-row .d { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); flex: 0 0 88px; }
+  .hist-row .t { flex: 1 1 auto; }
+  .hist-row .t .sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .hist-row.voided .t .name { text-decoration: line-through; opacity: 0.6; }
+  .tag { font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 999px; }
+  .tag.si { background: var(--accent); color: #0B1211; }
+  .tag.no { background: var(--surface-2); color: var(--text-dim); }
+  .tag.cancel { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+  .yearchips { display: flex; gap: 8px; margin-bottom: 14px; }
+  .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 14px; padding: 8px 0; min-height: 44px; }
+
+  /* Formularios */
+  .form label { display: block; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim); margin: 16px 0 6px; }
+  .form input {
+    width: 100%; max-width: 380px; min-height: 46px; padding: 0 14px; border-radius: 10px;
+    background: var(--surface); border: 1px solid var(--surface-2); color: var(--text);
+    font-family: var(--font-body); font-size: 15px;
+  }
+  .form input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .form input.invalid { outline: 2px solid var(--danger); }
+  .form .note { font-size: 12px; color: var(--text-dim); margin-top: 12px; max-width: 380px; }
+  .form .ok { color: var(--accent); font-size: 14px; margin-left: 12px; }
+
+  /* Toggles */
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; max-width: 420px; padding: 14px 0; border-bottom: 1px solid var(--surface-2); }
+  .toggle-row .lbl { font-size: 15px; }
+  .toggle-row .sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .switch { position: relative; width: 46px; height: 26px; flex: 0 0 auto; }
+  .switch input { opacity: 0; width: 100%; height: 100%; position: absolute; cursor: pointer; z-index: 2; }
+  .switch .track { position: absolute; inset: 0; background: var(--surface-2); border-radius: 999px; transition: background 0.15s; }
+  .switch .track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 999px; background: var(--text-dim); transition: all 0.15s; }
+  .switch input:checked + .track { background: var(--accent); }
+  .switch input:checked + .track::after { left: 23px; background: #0B1211; }
+
+  .empty-note { color: var(--text-dim); padding: 20px 0; font-size: 14px; }
+  .empty-note a { color: var(--accent); }
+
+  @media (max-width: 700px) {
+    .body { grid-template-columns: 1fr; gap: 16px; }
+    .menu { flex-direction: row; overflow-x: auto; padding-bottom: 6px; }
+    .menu button { flex: 0 0 auto; white-space: nowrap; }
+    .stats { display: flex; overflow-x: auto; }
+    .stat { flex: 0 0 40%; }
+    .ticket-card { flex-wrap: wrap; }
+    .ticket-card .action { flex-basis: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="cuenta-wrap" id="app">
+  <div class="loading">Cargando tu cuenta…</div>
+</div>
+
+<script>
+// Capa de datos: el perfil vive en SQLite del lab, alimentado por webhooks + backfill.
+// Nunca llama al API de Ticket Tailor por request.
+async function fetchAccount() {
+  const r = await fetch('/api/perfil');
+  if (r.status === 401) { location.href = '/entrar'; throw new Error('sesión'); }
+  if (!r.ok) throw new Error('No se pudo cargar la cuenta');
+  return r.json();
+}
+async function updateProfile(data) {
+  const r = await fetch('/api/perfil/datos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  return r.json();
+}
+async function updatePreferences(prefs) {
+  const r = await fetch('/api/perfil/prefs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(prefs) });
+  return r.json();
+}
+
+const MESES_AB = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'];
+const DOW_AB = ['DOM','LUN','MAR','MIÉ','JUE','VIE','SÁB'];
+
+let state = { data: null, section: 'boletos', year: 'all', error: null };
+
+function metaLine(t) {
+  const parts = [];
+  if (t.date) {
+    const [y, m, d] = t.date.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    parts.push(`${DOW_AB[dt.getDay()]} ${d} ${MESES_AB[m-1]}`);
+  }
+  if (t.time) parts.push(fmt12(t.time));
+  if (t.planta) parts.push(t.planta.toUpperCase());
+  if (t.seat) {
+    const s = [t.seat.section, t.seat.row ? 'FILA ' + t.seat.row : null, t.seat.number].filter(Boolean).join(', ');
+    if (s) parts.push(s.toUpperCase());
+  }
+  return parts.join(' · ');
+}
+function fmt12(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2,'0')} ${ampm}`;
+}
+function histDate(t) {
+  if (!t.date) return '—';
+  const [y, m, d] = t.date.split('-').map(Number);
+  return `${d} ${MESES_AB[m-1]} ${y}`;
+}
+
+function render() {
+  const app = document.getElementById('app');
+  if (state.error) { app.innerHTML = `<div class="empty">${state.error} <a href="/entrar">Volver a entrar</a></div>`; return; }
+  if (!state.data) { app.innerHTML = '<div class="loading">Cargando tu cuenta…</div>'; return; }
+  const { customer, stats, upcoming, history, preferences } = state.data;
+
+  app.innerHTML = `
+    <div class="acct-head">
+      <div>
+        <h1>${customer.name ?? customer.email}</h1>
+        <div class="acct-meta">${customer.email}${customer.desde ? ' · desde ' + customer.desde : ''} · <a href="#" id="salir">salir</a></div>
+      </div>
+      <button class="btn-small" id="editarBtn">Editar</button>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="num">${stats.asistidos}</div><div class="lbl">Shows asistidos</div></div>
+      <div class="stat"><div class="num">${stats.proximos}</div><div class="lbl">Boletos próximos</div></div>
+      <div class="stat"><div class="num" style="font-size:clamp(16px,3vw,22px)">${stats.favorito ?? '—'}</div><div class="lbl">Show favorito</div></div>
+    </div>
+
+    <div class="body">
+      <div>
+        <div class="menu-label">Menú</div>
+        <nav class="menu">
+          <button data-s="boletos" class="${state.section==='boletos'?'active':''}">Mis boletos</button>
+          <button data-s="historial" class="${state.section==='historial'?'active':''}">Historial</button>
+          <button data-s="datos" class="${state.section==='datos'?'active':''}">Mis datos</button>
+          <button data-s="correos" class="${state.section==='correos'?'active':''}">Correos y avisos</button>
+          <button disabled>Recompensas <span class="fase">fase 2</span></button>
+        </nav>
+      </div>
+      <div id="panel">${renderSection(upcoming, history, customer, preferences)}</div>
+    </div>`;
+
+  document.getElementById('salir').addEventListener('click', async e => {
+    e.preventDefault();
+    await fetch('/salir', { method: 'POST' });
+    location.href = '/entrar';
+  });
+  document.getElementById('editarBtn').addEventListener('click', () => { state.section = 'datos'; render(); });
+  document.querySelectorAll('.menu button[data-s]').forEach(b =>
+    b.addEventListener('click', () => { state.section = b.dataset.s; render(); }));
+  bindSection();
+}
+
+function renderSection(upcoming, history, customer, preferences) {
+  if (state.section === 'boletos') {
+    const cards = upcoming.length
+      ? upcoming.map(t => `
+        <div class="ticket-card">
+          <div class="qr">${t.qr ? `<img src="${t.qr}" alt="QR del boleto">` : ''}</div>
+          <div class="info">
+            <div class="title">${t.show}</div>
+            <div class="meta">${metaLine(t)}</div>
+          </div>
+          <div class="action"><a class="btn btn-buy" href="/mi-cuenta/boleto/${t.id}">Ver boleto</a></div>
+        </div>`).join('')
+      : `<div class="empty-note">No tienes boletos próximos. <a href="/">Ver la cartelera</a></div>`;
+
+    const recent = history.slice(0, 4);
+    const rows = recent.length ? recent.map(histRow).join('') : `<div class="empty-note">Aún no has ido a ningún show.</div>`;
+    return `
+      <div class="section-head">Próximos boletos</div>
+      ${cards}
+      <div class="section-head" style="margin-top:28px">Shows a los que has ido</div>
+      ${rows}
+      ${history.length > 4 ? `<button class="linkbtn" id="verTodo">Ver todo el historial →</button>` : ''}`;
+  }
+
+  if (state.section === 'historial') {
+    const years = [...new Set(history.map(t => (t.date ?? '').slice(0, 4)).filter(Boolean))].sort().reverse();
+    const filtered = state.year === 'all' ? history : history.filter(t => (t.date ?? '').startsWith(state.year));
+    const rows = filtered.length ? filtered.map(histRow).join('') : `<div class="empty-note">Nada en ese año.</div>`;
+    return `
+      <div class="section-head">Historial · ${filtered.length} ${filtered.length === 1 ? 'función' : 'funciones'}</div>
+      <div class="yearchips">
+        <button class="chip ${state.year==='all'?'active':''}" data-y="all">Todos</button>
+        ${years.map(y => `<button class="chip ${state.year===y?'active':''}" data-y="${y}">${y}</button>`).join('')}
+      </div>
+      ${rows}`;
+  }
+
+  if (state.section === 'datos') {
+    return `
+      <div class="section-head">Mis datos</div>
+      <form class="form" id="datosForm">
+        <label>Nombre</label>
+        <input id="f_name" value="${customer.name ?? ''}" required>
+        <label>Email</label>
+        <input id="f_email" value="${customer.email}" disabled title="El email es la llave de tu cuenta">
+        <label>Teléfono</label>
+        <input id="f_phone" value="${customer.phone ?? ''}" placeholder="—">
+        <div style="margin-top:20px; display:flex; align-items:center">
+          <button type="submit" class="btn-buy">Guardar</button>
+          <span class="ok" id="datosOk"></span>
+        </div>
+        <p class="note">Los cambios se guardan solo en tu cuenta del teatro; no modifican tus datos en Ticket Tailor.</p>
+      </form>`;
+  }
+
+  if (state.section === 'correos') {
+    const t = (id, lbl, sub, val) => `
+      <div class="toggle-row">
+        <div><div class="lbl">${lbl}</div><div class="sub">${sub}</div></div>
+        <div class="switch"><input type="checkbox" id="${id}" ${val ? 'checked' : ''}><div class="track"></div></div>
+      </div>`;
+    return `
+      <div class="section-head">Correos y avisos</div>
+      ${t('p_newsletter', 'Newsletter', 'Novedades del teatro, una vez al mes', preferences.newsletter)}
+      ${t('p_reminders', 'Recordatorios de show', 'Un aviso el día de tu función', preferences.showReminders)}
+      ${t('p_offers', 'Ofertas', 'Preventas y descuentos ocasionales', preferences.offers)}
+      <div class="empty-note" id="prefsOk" style="min-height:20px"></div>`;
+  }
+
+  return '';
+}
+
+function histRow(t) {
+  const tag = t.voided
+    ? `<span class="tag cancel">Cancelado</span>`
+    : t.attended
+      ? `<span class="tag si">Asistió</span>`
+      : `<span class="tag no">No asistió</span>`;
+  return `
+    <div class="hist-row ${t.voided ? 'voided' : ''}">
+      <div class="d">${histDate(t)}</div>
+      <div class="t">
+        <div class="name">${t.show}</div>
+        <div class="sub">${t.planta ?? ''}</div>
+      </div>
+      ${tag}
+    </div>`;
+}
+
+function bindSection() {
+  const verTodo = document.getElementById('verTodo');
+  if (verTodo) verTodo.addEventListener('click', () => { state.section = 'historial'; render(); });
+
+  document.querySelectorAll('.yearchips .chip').forEach(c =>
+    c.addEventListener('click', () => { state.year = c.dataset.y; render(); }));
+
+  const datosForm = document.getElementById('datosForm');
+  if (datosForm) datosForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const name = document.getElementById('f_name');
+    if (!name.value.trim()) { name.classList.add('invalid'); return; }
+    name.classList.remove('invalid');
+    const updated = await updateProfile({ name: name.value.trim(), phone: document.getElementById('f_phone').value.trim() || null });
+    state.data.customer.name = updated.name;
+    state.data.customer.phone = updated.phone;
+    document.getElementById('datosOk').textContent = 'Guardado ✓';
+    setTimeout(() => { const el = document.getElementById('datosOk'); if (el) el.textContent = ''; }, 2500);
+  });
+
+  for (const [id, key] of [['p_newsletter', 'newsletter'], ['p_reminders', 'showReminders'], ['p_offers', 'offers']]) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', async () => {
+      const prefs = await updatePreferences({ [key]: el.checked });
+      state.data.preferences = prefs;
+      const ok = document.getElementById('prefsOk');
+      if (ok) { ok.textContent = 'Preferencias guardadas ✓'; setTimeout(() => { if (ok) ok.textContent = ''; }, 2000); }
+    });
+  }
+}
+
+async function load() {
+  try {
+    state.data = await fetchAccount();
+    state.error = null;
+  } catch (err) {
+    if (err.message !== 'sesión') state.error = 'No pudimos cargar tu cuenta.';
+  }
+  render();
+}
+
+if (location.hash === '#datos') state.section = 'datos';
+load();
+// Refresco ligero: el perfil abierto se actualiza solo (compra en otra pestaña → aparece)
+setInterval(async () => {
+  try {
+    const fresh = await fetchAccount();
+    state.data = fresh;
+    // no re-render completo si el usuario está escribiendo en el form
+    if (state.section !== 'datos') render();
+  } catch { /* siguiente tick */ }
+}, 30_000);
+</script>
+</body>
+</html>

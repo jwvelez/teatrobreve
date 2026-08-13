@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tu boleto · Teatro</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=Martian+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+<style>
+  /* Pantalla de puerta: QR grande sobre panel claro, nada más */
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100dvh; padding: 24px; }
+  .back { position: fixed; top: 16px; left: 16px; color: var(--text-dim); text-decoration: none; font-size: 14px; min-height: 44px; display: flex; align-items: center; }
+  .ticket {
+    width: min(400px, 92vw); text-align: center;
+  }
+  .qr-panel {
+    background: #fff; border-radius: 20px; padding: 24px;
+    display: flex; align-items: center; justify-content: center;
+    aspect-ratio: 1; margin-bottom: 24px;
+  }
+  .qr-panel img { width: 100%; height: 100%; object-fit: contain; }
+  .qr-panel .noqr { color: #999; font-size: 14px; }
+  .show { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+  .meta { font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin-top: 10px; line-height: 1.9; }
+  .estado { display: inline-block; margin-top: 18px; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; padding: 8px 18px; border-radius: 999px; }
+  .estado.valido { background: var(--accent); color: #0B1211; }
+  .estado.escaneado { background: var(--surface-2); color: var(--text); }
+  .estado.cancelado { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+  .qr-panel.cancelado { opacity: 0.35; filter: grayscale(1); }
+</style>
+</head>
+<body>
+<a class="back" href="/mi-cuenta">← Mi cuenta</a>
+<div class="ticket" id="t"><div class="loading">Cargando boleto…</div></div>
+<script>
+const id = location.pathname.split('/').pop();
+fetch('/api/perfil/boleto/' + encodeURIComponent(id))
+  .then(r => { if (r.status === 401) { location.href = '/entrar'; throw 0; } return r.json(); })
+  .then(t => {
+    if (t.error) { document.getElementById('t').innerHTML = '<div class="empty">Boleto no encontrado.</div>'; return; }
+    const estadoCls = t.estado === 'Válido' ? 'valido' : t.estado === 'Ya escaneado' ? 'escaneado' : 'cancelado';
+    const meta = [];
+    if (t.date) {
+      const [y, m, d] = t.date.split('-').map(Number);
+      const MES = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'][m-1];
+      meta.push(`${d} ${MES} ${y}`);
+    }
+    if (t.time) {
+      const [h, mm] = t.time.split(':').map(Number);
+      meta.push(`${h % 12 === 0 ? 12 : h % 12}:${String(mm).padStart(2,'0')} ${h >= 12 ? 'PM' : 'AM'}`);
+    }
+    if (t.planta) meta.push(t.planta.toUpperCase());
+    if (t.seat) meta.push([t.seat.section, t.seat.row ? 'FILA ' + t.seat.row : null, t.seat.number].filter(Boolean).join(', ').toUpperCase());
+    document.getElementById('t').innerHTML = `
+      <div class="qr-panel ${estadoCls === 'cancelado' ? 'cancelado' : ''}">
+        ${t.qr ? `<img src="${t.qr}" alt="Código QR del boleto">` : '<div class="noqr">QR no disponible</div>'}
+      </div>
+      <div class="show">${t.show}</div>
+      <div class="meta">${meta.join('<br>')}</div>
+      <div class="estado ${estadoCls}">${t.estado}</div>`;
+  })
+  .catch(() => {});
+</script>
+</body>
+</html>

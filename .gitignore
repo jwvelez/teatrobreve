@@ -1,0 +1,8 @@
+.env
+node_modules/
+data/
+data-tunnel.log
+dumps/
+!dumps/.gitkeep
+!dumps/webhooks/.gitkeep
+.DS_Store

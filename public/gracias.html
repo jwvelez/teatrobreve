@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>¡Gracias! · tb-ticketing-lab</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=Martian+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>¡Gracias por tu compra!</h1>
+  <p class="subtext">Página de confirmación propia (V11). Ticket Tailor redirige aquí con parámetros <code class="mono">tt_*</code> en la URL.</p>
+
+  <div class="card" style="margin-top:24px">
+    <div class="section-title" style="margin-top:0">Parámetros recibidos en la URL</div>
+    <table class="data" id="params"></table>
+  </div>
+
+  <div class="card">
+    <div class="section-title" style="margin-top:0">Detalle de la orden (vía API, con dump)</div>
+    <div id="orderStatus" class="subtext">—</div>
+    <pre class="json" id="orderDetail" style="display:none"></pre>
+  </div>
+
+  <p><a href="/">← Volver a la cartelera</a> · <a href="/admin">Panel de hallazgos</a></p>
+</div>
+
+<script>
+// Si el checkout corrió en el modal (iframe), el redirect de TT aterriza dentro
+// del iframe: romper el marco para que la confirmación tome la página completa.
+if (window.self !== window.top) {
+  try { window.top.location = window.location.href; } catch { /* cross-origin: continuar embebido */ }
+}
+
+const params = new URLSearchParams(location.search);
+const expected = ['tt_order_id', 'tt_order_value', 'tt_currency', 'tt_event_id'];
+
+const tbl = document.getElementById('params');
+if ([...params].length === 0) {
+  tbl.innerHTML = '<tr><td class="subtext">Sin parámetros. Esta página se prueba llegando desde el checkout de Ticket Tailor con la URL de redirect configurada.</td></tr>';
+} else {
+  tbl.innerHTML = '<tr><th>Parámetro</th><th>Valor</th><th>Esperado</th></tr>' +
+    [...new Set([...expected, ...[...params.keys()]])].map(k => {
+      const v = params.get(k);
+      return `<tr>
+        <td class="mono">${k}</td>
+        <td class="mono">${v ?? '<span style="color:var(--danger)">NO LLEGÓ</span>'}</td>
+        <td>${expected.includes(k) ? 'sí' : 'extra'}</td>
+      </tr>`;
+    }).join('');
+}
+
+const orderId = params.get('tt_order_id');
+const statusEl = document.getElementById('orderStatus');
+const detailEl = document.getElementById('orderDetail');
+if (orderId) {
+  statusEl.textContent = `Consultando GET /v1/orders/${orderId}…`;
+  fetch('/api/order/' + encodeURIComponent(orderId))
+    .then(async r => {
+      const text = await r.text();
+      try { return JSON.parse(text); }
+      catch { throw new Error('Respuesta no-JSON del server (HTTP ' + r.status + '): ' + text.slice(0, 120)); }
+    })
+    .then(data => {
+      statusEl.innerHTML = data.status === 200
+        ? `HTTP 200 — detalle obtenido. Dump: <a href="${data.dump}" target="_blank" class="mono">${data.dump}</a>`
+        : `HTTP ${data.status ?? '?'} — ${data.error ?? 'revisar dump'} ${data.dump ? `· <a href="${data.dump}" target="_blank">dump</a>` : ''}`;
+      detailEl.style.display = 'block';
+      detailEl.textContent = JSON.stringify(data.order, null, 2);
+    })
+    .catch(err => { statusEl.textContent = 'Error: ' + err.message; });
+} else {
+  statusEl.textContent = 'Sin tt_order_id en la URL: no hay orden que consultar.';
+}
+</script>
+</body>
+</html>

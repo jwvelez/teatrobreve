@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entrar · Teatro</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=Martian+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .entrar-wrap { max-width: 420px; margin: 0 auto; padding: 18vh 20px 0; }
+  .entrar-card { background: var(--surface); border: 1px solid var(--surface-2); border-radius: 14px; padding: 28px; }
+  .entrar-card h1 { font-size: 26px; margin-bottom: 6px; }
+  .entrar-card p { color: var(--text-dim); font-size: 14px; margin-bottom: 20px; }
+  .entrar-card input {
+    width: 100%; min-height: 48px; padding: 0 14px; border-radius: 10px;
+    background: var(--bg); border: 1px solid var(--surface-2); color: var(--text);
+    font-family: var(--font-body); font-size: 16px; margin-bottom: 12px;
+  }
+  .entrar-card input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .entrar-card button { width: 100%; }
+  .msg { margin-top: 14px; font-size: 14px; color: var(--accent); min-height: 20px; }
+</style>
+</head>
+<body>
+<div class="entrar-wrap">
+  <div class="entrar-card">
+    <h1>Mi cuenta</h1>
+    <p>Escribe tu correo y te enviamos un enlace para entrar. Sin contraseñas.</p>
+    <form id="f">
+      <input type="email" id="email" placeholder="tu@correo.com" required autocomplete="email" autofocus>
+      <button type="submit" class="btn-buy">Enviarme el enlace</button>
+    </form>
+    <div class="msg" id="msg"></div>
+  </div>
+</div>
+<script>
+document.getElementById('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/entrar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: document.getElementById('email').value }),
+    });
+    const j = await r.json();
+    document.getElementById('msg').textContent = j.message ?? 'Si el correo existe, enviamos un enlace.';
+  } catch {
+    document.getElementById('msg').textContent = 'Algo falló. Intenta de nuevo.';
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

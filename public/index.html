@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cartelera · tb-ticketing-lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=Martian+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="pagehead">
+    <div>
+      <h1>Cartelera</h1>
+      <p class="subtext">Funciones servidas desde el caché local — nunca directo del API. <a href="/admin" class="mono">/admin</a></p>
+    </div>
+    <div class="monthnav">
+      <button id="prevMonth" aria-label="Mes anterior">←</button>
+      <span id="monthLabel"></span>
+      <button id="nextMonth" aria-label="Mes siguiente">→</button>
+    </div>
+  </div>
+
+  <div class="segmented" role="tablist">
+    <button data-view="lista" class="active">Lista</button>
+    <button data-view="mes">Mes</button>
+    <button data-view="semana">Semana</button>
+  </div>
+
+  <div class="filters" id="filters">
+    <!-- chips de día + dropdown de show, generados por JS -->
+  </div>
+
+  <div id="content"><div class="loading">Cargando funciones…</div></div>
+</div>
+
+<script>
+/**
+ * Capa de datos intercambiable: hoy pega al caché local del laboratorio;
+ * en producción se apunta al API del sitio real.
+ */
+async function fetchShows() {
+  const res = await fetch('/api/cartelera');
+  if (!res.ok) throw new Error('No se pudo cargar la cartelera');
+  const json = await res.json();
+  return json.performances;
+}
+
+const DOW = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+const DOW_ORDER = ['Todos', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+const MONTHS = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
+const MONTHS_LONG = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+
+const state = {
+  view: 'lista',
+  month: startOfMonth(new Date()),
+  dow: 'Todos',
+  show: 'all',           // 'all' | slug | 'soon'
+  selectedDay: null,     // 'YYYY-MM-DD' al hacer clic en el calendario
+  performances: [],
+  loaded: false,
+  error: null,
+};
+
+function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function fmtPrice(lower, upper) {
+  if (lower == null) return '';
+  const f = c => '$' + Math.round(c / 100);
+  return lower === upper || upper == null ? f(lower) : `${f(upper)} · ${f(lower)}`;
+}
+function dateLabel(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return `${DOW[dt.getDay()]} ${d} de ${MONTHS_LONG[m-1]}`;
+}
+function dowOf(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return DOW[new Date(y, m - 1, d).getDay()];
+}
+
+// ---------- filtros ----------
+function applyFilters(list) {
+  return list.filter(p => {
+    if (!p.date) return false;
+    const [y, m] = p.date.split('-').map(Number);
+    if (y !== state.month.getFullYear() || m !== state.month.getMonth() + 1) return false;
+    if (state.selectedDay && p.date !== state.selectedDay) return false;
+    if (state.dow !== 'Todos' && dowOf(p.date) !== state.dow) return false;
+    if (state.show === 'soon' && p.status !== 'soon') return false;
+    if (state.show !== 'all' && state.show !== 'soon' && p.showSlug !== state.show) return false;
+    return true;
+  }).sort((a, b) => (a.date + (a.time ?? '')).localeCompare(b.date + (b.time ?? '')));
+}
+
+// ---------- render ----------
+function render() {
+  document.getElementById('monthLabel').textContent =
+    `${MONTHS[state.month.getMonth()]} ${state.month.getFullYear()}`;
+  renderFilters();
+  const content = document.getElementById('content');
+  if (state.error) { content.innerHTML = `<div class="empty">${state.error}</div>`; return; }
+  if (!state.loaded) { content.innerHTML = '<div class="loading">Cargando funciones…</div>'; return; }
+
+  if (state.view === 'semana') {
+    content.innerHTML = '<div class="empty">Vista Semana: pendiente (stub).</div>';
+    return;
+  }
+
+  const filtered = applyFilters(state.performances);
+  let html = '';
+  if (state.view === 'mes') {
+    html += renderCalendar();
+    html += `<div class="section-title">Próximas funciones</div>`;
+  }
+  html += renderLista(filtered);
+  content.innerHTML = html;
+  bindCalendarClicks();
+}
+
+function renderFilters() {
+  const el = document.getElementById('filters');
+  const shows = [...new Map(state.performances.map(p => [p.showSlug, p.showTitle])).entries()];
+  el.innerHTML = DOW_ORDER.map(d =>
+    `<button class="chip ${state.dow === d ? 'active' : ''}" data-dow="${d}">${d}</button>`
+  ).join('') + `
+    <select class="showfilter" id="showFilter">
+      <option value="all" ${state.show === 'all' ? 'selected' : ''}>Todos los shows</option>
+      ${shows.map(([slug, title]) => `<option value="${slug}" ${state.show === slug ? 'selected' : ''}>${title}</option>`).join('')}
+      <option value="soon" ${state.show === 'soon' ? 'selected' : ''}>Pronto</option>
+    </select>`;
+  el.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
+    state.dow = c.dataset.dow; state.selectedDay = null; render();
+  }));
+  document.getElementById('showFilter').addEventListener('change', e => {
+    state.show = e.target.value; render();
+  });
+}
+
+function renderLista(list) {
+  if (!list.length) {
+    return '<div class="empty">No hay funciones con ese filtro. Prueba otro día.</div>';
+  }
+  const groups = {};
+  for (const p of list) (groups[p.date] ??= []).push(p);
+  const today = todayStr();
+  let html = '';
+  for (const [date, perfs] of Object.entries(groups)) {
+    html += `<div class="daygroup-head ${date === today ? 'today' : ''}">${dateLabel(date)}</div>`;
+    for (const p of perfs) html += renderRow(p);
+  }
+  return html;
+}
+
+function renderRow(p) {
+  const thumb = p.thumbnailUrl
+    ? `<img class="thumb" src="${p.thumbnailUrl}" alt="">`
+    : `<div class="thumb"></div>`;
+  let action;
+  if (p.status === 'soldout') {
+    action = `<button class="btn-soldout" disabled>Agotado</button>`;
+  } else if (p.status === 'soon') {
+    action = `<button class="btn-notify">Avísame</button> <span class="badge-soon">PRONTO</span>`;
+  } else {
+    const low = p.status === 'low' ? `<div class="badge-low">Últimos boletos</div>` : '';
+    const url = p.checkoutUrl ?? '#';
+    // El href queda como fallback (clic con Cmd/Ctrl, o sin JS); el clic normal abre el modal
+    action = `${low}<a class="btn btn-buy" data-checkout href="${url}" target="_blank" rel="noopener">Comprar boletos</a>`;
+  }
+  return `<div class="row">
+    ${thumb}
+    <div class="time">${p.time ?? ''}</div>
+    <div class="info">
+      <div class="title">${p.showTitle}</div>
+      <div class="price">${fmtPrice(p.priceLower, p.priceUpper)}</div>
+    </div>
+    <div class="action">${action}</div>
+  </div>`;
+}
+
+function renderCalendar() {
+  const y = state.month.getFullYear(), m = state.month.getMonth();
+  const first = new Date(y, m, 1);
+  // Semana empezando en lunes
+  const startOffset = (first.getDay() + 6) % 7;
+  const gridStart = new Date(y, m, 1 - startOffset);
+  const today = todayStr();
+  const byDate = {};
+  for (const p of state.performances) {
+    if (!p.date) continue;
+    (byDate[p.date] ??= []).push(p);
+  }
+  let html = '<div class="calendar">';
+  for (const d of ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom']) html += `<div class="cal-dow">${d}</div>`;
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(gridStart); d.setDate(gridStart.getDate() + i);
+    const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const outside = d.getMonth() !== m;
+    const entries = (byDate[ds] ?? []).slice(0, 3).map(p =>
+      `<div class="cal-entry"><span class="t">${p.time ?? ''}</span> ${abbrev(p.showTitle)}</div>`
+    ).join('');
+    const more = (byDate[ds] ?? []).length > 3 ? `<div class="cal-entry">+${byDate[ds].length - 3} más</div>` : '';
+    html += `<div class="cal-day ${outside ? 'outside' : ''} ${ds === today ? 'today' : ''} ${state.selectedDay === ds ? 'selected' : ''} ${(byDate[ds] ?? []).length ? 'hasshows' : ''}" data-date="${ds}">
+      <span class="daynum">${d.getDate()}</span>${entries}${more}
+    </div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function bindCalendarClicks() {
+  document.querySelectorAll('.cal-day').forEach(cell => cell.addEventListener('click', () => {
+    const ds = cell.dataset.date;
+    state.selectedDay = state.selectedDay === ds ? null : ds;
+    // clic en día de otro mes: navegar a ese mes
+    const [y, m] = ds.split('-').map(Number);
+    state.month = new Date(y, m - 1, 1);
+    render();
+  }));
+}
+
+function abbrev(title) {
+  return title.length > 14 ? title.slice(0, 13) + '…' : title;
+}
+
+// ---------- navegación ----------
+document.querySelectorAll('.segmented button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.segmented button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  state.view = b.dataset.view;
+  render();
+}));
+document.getElementById('prevMonth').addEventListener('click', () => {
+  state.month = new Date(state.month.getFullYear(), state.month.getMonth() - 1, 1);
+  state.selectedDay = null; render();
+});
+document.getElementById('nextMonth').addEventListener('click', () => {
+  state.month = new Date(state.month.getFullYear(), state.month.getMonth() + 1, 1);
+  state.selectedDay = null; render();
+});
+
+// ---------- modal de checkout ----------
+// Estrategia: usar el WIDGET OFICIAL de Ticket Tailor adentro de nuestro modal
+// (embed .tt-widget soportado — "keep the checkout experience on your site").
+// widget.js crea su propio iframe con TODO su wiring (iframe-resizer, handshake
+// tt-widget-frame-init, y los handlers globales de tt-event-page-checkout-open /
+// tt-basket-widget-open que mantienen las etapas del checkout en la página).
+// Replicar ese protocolo a mano (intento anterior) fallaba en el paso 2 porque
+// el checkout detecta al host oficial por el canal iframe-resizer, no solo por
+// el handshake.
+let overlayEl = null;
+let ticketModalEl = null;
+
+// SHIM CLAVE (debe existir ANTES de que cargue widget.js): en las Event Pages
+// de TT, el paso 2 del checkout llega como mensaje que widget.js entrega a
+// TTEventPages.modals.loadTicketModal(url). Si el global no existe, widget.js
+// cae a window.location/nueva pestaña. Lo definimos nosotros: la URL ya viene
+// preparada por widget.js (modal_widget=true&widget=true) y la montamos en un
+// overlay fullscreen propio.
+window.TTEventPages = {
+  modals: {
+    loadTicketModal(url) {
+      closeTicketModal();
+      ticketModalEl = document.createElement('div');
+      ticketModalEl.className = 'tt-checkout-stage2';
+      ticketModalEl.innerHTML = `
+        <button class="stage2-close" aria-label="Cerrar">✕</button>
+        <iframe allow="payment" src="${url}"></iframe>`;
+      ticketModalEl.querySelector('.stage2-close').addEventListener('click', closeCheckoutModal);
+      document.body.appendChild(ticketModalEl);
+      document.body.style.overflow = 'hidden';
+    },
+  },
+};
+
+function closeTicketModal() {
+  if (ticketModalEl) { ticketModalEl.remove(); ticketModalEl = null; }
+}
+
+// Sesión del perfil (si existe): pre-llenar el checkout de TT.
+// Formato oficial: &preset_data=1#p[first_name]=..&p[last_name]=..&p[email]=..
+let sessionCustomer = null;
+fetch('/api/session').then(r => r.json()).then(c => { sessionCustomer = c; }).catch(() => {});
+
+function withPrefill(url) {
+  if (!sessionCustomer?.email) return url;
+  try {
+    const u = new URL(url, location.origin);
+    u.searchParams.set('preset_data', '1');
+    const name = String(sessionCustomer.name ?? '').trim();
+    const first = name.split(/\s+/)[0] ?? '';
+    const last = name.split(/\s+/).slice(1).join(' ');
+    const p = [];
+    if (first) p.push(`p[first_name]=${encodeURIComponent(first)}`);
+    if (last) p.push(`p[last_name]=${encodeURIComponent(last)}`);
+    p.push(`p[email]=${encodeURIComponent(sessionCustomer.email)}`);
+    u.hash = p.join('&');
+    return u.toString();
+  } catch { return url; }
+}
+
+function openCheckoutModal(url) {
+  url = withPrefill(url);
+  closeCheckoutModal();
+  overlayEl = document.createElement('div');
+  overlayEl.className = 'checkout-overlay';
+  overlayEl.innerHTML = `
+    <div class="checkout-modal" role="dialog" aria-modal="true" aria-label="Checkout">
+      <button class="modal-close floating" aria-label="Cerrar">✕</button>
+      <div class="widget-host"></div>
+    </div>`;
+  overlayEl.addEventListener('click', e => { if (e.target === overlayEl) closeCheckoutModal(); });
+  overlayEl.querySelector('.modal-close').addEventListener('click', closeCheckoutModal);
+
+  // Embed oficial: <div class="tt-widget"> + script widget.js con data-url.
+  // data-event-page-widget=true nombra el iframe "tt-event-page-widget": así el
+  // checkout interno sabe que el host soporta modal y emite mensajes en vez de
+  // abrir pestañas.
+  const host = overlayEl.querySelector('.widget-host');
+  const widget = document.createElement('div');
+  widget.className = 'tt-widget';
+  const fallback = document.createElement('div');
+  fallback.className = 'tt-widget-fallback';
+  fallback.innerHTML = `<p>Cargando checkout…</p>`;
+  widget.appendChild(fallback);
+  const s = document.createElement('script');
+  s.src = 'https://cdn.tickettailor.com/js/widgets/min/widget.js';
+  s.setAttribute('data-url', url);
+  s.setAttribute('data-type', 'inline');
+  s.setAttribute('data-event-page-widget', 'true');
+  s.setAttribute('data-inline-minimal', 'true');
+  s.setAttribute('data-inline-show-logo', 'false');
+  s.setAttribute('data-inline-bg-fill', 'true');
+  widget.appendChild(s);
+  host.appendChild(widget);
+
+  document.body.appendChild(overlayEl);
+  document.body.style.overflow = 'hidden';
+}
+
+function closeCheckoutModal() {
+  closeTicketModal();
+  if (overlayEl) { overlayEl.remove(); overlayEl = null; }
+  document.body.style.overflow = '';
+  // limpiar iframes overlay que widget.js haya podido añadir a <body>
+  document.querySelectorAll('iframe.tt-basket-overlay-iframe').forEach(f => f.remove());
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCheckoutModal(); });
+
+// Cierres emitidos por el checkout de TT
+window.addEventListener('message', e => {
+  const t = e.data && e.data.type;
+  if (typeof t === 'string' && /^tt-.*close/.test(t)) closeCheckoutModal();
+});
+
+// Diagnóstico: registrar TODO postMessage recibido durante el checkout para
+// entender el protocolo real (se lee en /api/debug/messages)
+window.addEventListener('message', e => {
+  let data;
+  try { data = typeof e.data === 'string' ? e.data.slice(0, 500) : e.data; JSON.stringify(data); }
+  catch { data = String(e.data).slice(0, 500); }
+  fetch('/api/debug/messages', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ origin: e.origin, data }),
+  }).catch(() => {});
+});
+
+// Delegación: clic en cualquier botón "Comprar boletos" abre el modal
+document.addEventListener('click', e => {
+  const link = e.target.closest('a[data-checkout]');
+  if (!link) return;
+  if (e.metaKey || e.ctrlKey || e.shiftKey) return; // respetar abrir-en-pestaña explícito
+  e.preventDefault();
+  openCheckoutModal(link.getAttribute('href'));
+});
+
+// ---------- carga + refresco (el caché local se actualiza por sync/webhook) ----------
+async function load() {
+  try {
+    state.performances = await fetchShows();
+    state.loaded = true;
+    state.error = null;
+  } catch (err) {
+    state.error = err.message;
+  }
+  render();
+}
+load();
+setInterval(load, 15_000); // refresco de UI desde el caché local (no toca el API de TT)
+</script>
+</body>
+</html>

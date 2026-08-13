@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel de hallazgos · tb-ticketing-lab</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=Martian+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="pagehead">
+    <div>
+      <h1>Panel de hallazgos</h1>
+      <p class="subtext">Las 12 verificaciones contra el API real de Ticket Tailor. Este panel es el entregable. <a href="/">← Cartelera</a></p>
+    </div>
+    <button class="btn-small" id="syncNow">Sync ahora</button>
+  </div>
+
+  <div class="card">
+    <div class="section-title" style="margin-top:0">Estado del laboratorio</div>
+    <div id="labStatus" class="mono">cargando…</div>
+  </div>
+
+  <div class="card">
+    <div class="section-title" style="margin-top:0">Último enlace de entrada (demo de perfil, no se envía correo)</div>
+    <div id="loginLink" class="mono">— pide uno en /entrar —</div>
+  </div>
+
+  <div class="card">
+    <div class="section-title" style="margin-top:0">Verificaciones</div>
+    <p class="subtext" style="margin-bottom:12px">Regla de oro: nada se marca PASA sin dump que lo evidencie. "Correr" ejecuta el runner automático; las que dependen de pasos manuales (dashboard, compra, escaneo) evalúan la evidencia acumulada — ver TESTPLAN.md.</p>
+    <div style="overflow-x:auto">
+      <table class="data" id="verifications"></table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title" style="margin-top:0">Webhooks recibidos</div>
+    <div style="overflow-x:auto"><table class="data" id="webhookLog"></table></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title" style="margin-top:0">Campos descubiertos por recurso (nombres literales del JSON real)</div>
+    <div id="fieldDiscovery" class="mono" style="font-size:11px">—</div>
+  </div>
+</div>
+
+<script>
+async function j(url, opts) { const r = await fetch(url, opts); return r.json(); }
+
+async function loadStatus() {
+  const s = await j('/api/status');
+  document.getElementById('labStatus').innerHTML = [
+    `API key: ${s.apiKeyConfigured ? '✅ configurado' : '❌ falta en .env'}`,
+    `Webhook secret: ${s.webhookSecretConfigured ? '✅ configurado' : '❌ falta en .env'}`,
+    `Rate limit restante: ${s.rateLimit.remaining ?? '—'} (última req: ${s.rateLimit.lastRequestAt ?? 'ninguna'})`,
+    `Último sync: ${s.sync.at ?? 'nunca'} · ${s.sync.ok ? 'OK' : (s.sync.error ?? 'pendiente')} · ${s.sync.events} events`,
+    `DB: ${Object.entries(s.counts).map(([k, v]) => `${k}=${v}`).join(' · ')}`,
+  ].map(x => `<div>${x}</div>`).join('');
+}
+
+async function loadVerifications() {
+  const rows = await j('/api/verifications');
+  const tbl = document.getElementById('verifications');
+  tbl.innerHTML = `<tr><th></th><th>Verificación</th><th>Estado</th><th>Campos reales encontrados</th><th>Evidencia</th><th>Notas</th><th></th></tr>` +
+    rows.map(v => `<tr>
+      <td class="mono" style="white-space:nowrap">${v.id}${v.critical ? ' ★' : ''}</td>
+      <td style="min-width:180px">${v.title}</td>
+      <td><span class="status-pill st-${v.status}">${v.status}</span></td>
+      <td class="mono" style="font-size:10px; max-width:340px">${v.fields_found ?? '—'}</td>
+      <td>${v.dump_path ? `<a class="mono" href="${v.dump_path}" target="_blank">dump</a>` : '—'}</td>
+      <td style="max-width:280px; font-size:12px; color:var(--text-dim)">${v.notes ?? ''}</td>
+      <td style="white-space:nowrap">
+        <button class="btn-small" onclick="run('${v.id}')">Correr</button>
+        <button class="btn-small" onclick="override('${v.id}')">Editar</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function run(id) {
+  const btns = document.querySelectorAll('button'); btns.forEach(b => b.disabled = true);
+  try {
+    const r = await fetch('/api/verifications/' + id + '/run', { method: 'POST' });
+    if (!r.ok) alert((await r.json()).error);
+  } finally {
+    btns.forEach(b => b.disabled = false);
+    refresh();
+  }
+}
+
+async function override(id) {
+  const status = prompt(`${id}: nuevo estado (PENDIENTE / PASA / FALLA / PARCIAL) — vacío para no cambiar`);
+  if (status === null) return;
+  const notes = prompt('Notas (vacío para no cambiar):');
+  const body = {};
+  if (status) body.status = status.toUpperCase();
+  if (notes) body.notes = notes;
+  const r = await fetch('/api/verifications/' + id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!r.ok) alert((await r.json()).error);
+  refresh();
+}
+
+async function loadWebhooks() {
+  const rows = await j('/api/webhook-log');
+  const tbl = document.getElementById('webhookLog');
+  tbl.innerHTML = rows.length
+    ? `<tr><th>Recibido</th><th>Tipo</th><th>Header de firma</th><th>Firma</th><th>Procesado</th><th>Dump</th></tr>` +
+      rows.map(w => `<tr>
+        <td class="mono">${w.received_at}</td>
+        <td class="mono">${w.event_type}</td>
+        <td class="mono" style="font-size:10px">${w.signature_header_name ?? '—'}<br>${w.signature_scheme ?? ''}</td>
+        <td>${w.signature_valid === 1 ? '✅' : w.signature_valid === 0 ? '❌' : '—'}</td>
+        <td>${w.processed ? 'sí' : 'no'}</td>
+        <td>${w.dump_path ? `<a class="mono" href="${w.dump_path}" target="_blank">dump</a>` : '—'}</td>
+      </tr>`).join('')
+    : '<tr><td class="subtext">Ninguno todavía. Configura el túnel + webhook (TESTPLAN paso 3).</td></tr>';
+}
+
+async function loadDiscovery() {
+  const rows = await j('/api/field-discovery');
+  if (!rows.length) { document.getElementById('fieldDiscovery').textContent = 'Nada descubierto aún: corre el sync o V2.'; return; }
+  const byResource = {};
+  for (const r of rows) (byResource[r.resource] ??= []).push(r);
+  document.getElementById('fieldDiscovery').innerHTML = Object.entries(byResource).map(([res, fields]) =>
+    `<div style="margin-bottom:10px"><strong style="color:var(--accent)">${res}</strong>: ${fields.map(f => f.field).join(', ')}</div>`
+  ).join('');
+}
+
+document.getElementById('syncNow').addEventListener('click', async () => {
+  await fetch('/api/sync', { method: 'POST' });
+  refresh();
+});
+
+async function loadLoginLink() {
+  const link = await j('/api/login-link');
+  if (link) {
+    document.getElementById('loginLink').innerHTML =
+      `${link.email} · ${link.at}<br><a href="${link.url}">${link.url}</a>`;
+  }
+}
+
+function refresh() { loadStatus(); loadVerifications(); loadWebhooks(); loadDiscovery(); loadLoginLink(); }
+refresh();
+setInterval(refresh, 20_000);
+</script>
+</body>
+</html>

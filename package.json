@@ -1,0 +1,17 @@
+{
+  "name": "tb-ticketing-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Laboratorio de descubrimiento contra el API real de Ticket Tailor. No es código de producción.",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "findings": "node src/findings.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2"
+  }
+}
