@@ -1,6 +1,6 @@
 # FINDINGS · tb-ticketing-lab
 
-Generado: 2026-08-13T19:37:27.334Z
+Generado: 2026-09-10T23:50:07.973Z
 
 Este documento decide la arquitectura del proyecto real. Cada veredicto PASA está respaldado por un dump JSON crudo en /dumps.
 
@@ -30,13 +30,22 @@ Cada hecho está respaldado por dumps en /dumps y por el código del laboratorio
 | V3 | CRÍTICA · Disponibilidad: total, emitidos, restantes **(CRÍTICA)** | **PASA** | total: "quantity_total" · emitidos: "quantity_issued" · en hold: "quantity_held" · en carritos: "quantity_in_baskets" · restantes: NO expuesto — calcular quantity_total − quantity_issued − quantity_held ("quantity" ya viene como total − vendidos) | /dumps/v3-cruce-ev_8865698-post-refund-2026-08-13T19-02-52-808Z.json |
 | V4 | CRÍTICA · Agotado: estado explícito vs remaining=0, latencia webhook/sync **(CRÍTICA)** | **PASA** | El ticket_type agotado trae "status" = "on_sale" → agotado se infiere de contadores, no de un estado. · Latencia: vía webhook <1s (V8: webhook 18:54:27.49Z → caché actualizado 18:54:28.08Z) · vía sync peor caso = intervalo del job (60s) | /dumps/v4-soldout-transitions-2026-08-13T19-04-01-302Z.json |
 | V5 | Venta no abierta: fecha de inicio de venta expuesta | **PARCIAL** | El campo "tickets_available_at" existe en events (hoy null en todos); "tickets_available_at_message" trae plantilla de countdown. Falta un event con venta futura configurada para verlo poblado. | /dumps/v5-venta-no-abierta-events-2026-08-13T18-45-44-032Z.json |
-| V6 | CRÍTICA · Asientos: categorías, precios, sección/fila/asiento **(CRÍTICA)** | **PARCIAL** | precio en "price" (centavos) · valores vistos: [0] — cuenta TEST solo permite gratis, montos 2400/1800 NO verificables aquí · categorías "Planta *": 7 · disponibilidad por categoría: cada ticket_type trae sus propios contadores (quantity_total/quantity_issued/quantity_held) · issued_tickets traen el campo "reservation" pero null (compras GA) — falta una compra en evento CON seating chart para verlo poblado | /dumps/v6-asientos-ticket_types-e-issued_tickets-2026-08-13T18-45-44-833Z.json |
-| V7 | CRÍTICA · Webhooks: header de firma, HMAC, payload de orden **(CRÍTICA)** | **PASA** | header: "tickettailor-webhook-signature" · esquema verificado: HMAC-SHA256(TT_WEBHOOK_SECRET, t + body concatenados) hex, header formato t=,v1= · tipos de evento recibidos: ORDER.UPDATED, ISSUED_TICKET.UPDATED, EVENT.UPDATED, ORDER.CREATED, ISSUED_TICKET.CREATED, EVENT.CREATED · comprador en "buyer_details": {address, custom_questions, email, first_name, last_name, name, phone} · boletos/line items en "issued_tickets" (2) | /dumps/webhooks/webhook-ORDER_UPDATED-2026-08-13T18-54-27-494Z.json |
+| V6 | CRÍTICA · Asientos: categorías, precios, sección/fila/asiento **(CRÍTICA)** | **PASA** | precio en "price" (centavos) · valores vistos: [0, 1000, 3000, 2000] — cuenta TEST solo permite gratis, montos 2400/1800 NO verificables aquí · categorías "Planta *": 46 · disponibilidad por categoría: cada ticket_type trae sus propios contadores (quantity_total/quantity_issued/quantity_held) · asiento en issued_ticket it_135898047: "reservation" = "23-3" | /dumps/v6-asientos-ticket_types-e-issued_tickets-2026-09-10T23-43-28-636Z.json |
+| V7 | CRÍTICA · Webhooks: header de firma, HMAC, payload de orden **(CRÍTICA)** | **PASA** | header de firma: "tickettailor-webhook-signature" · esquema: HMAC-SHA256(TT_WEBHOOK_SECRET, t + body concatenados) hex, header formato t=,v1= · último evento verificado: "ORDER.CREATED" | /dumps/webhooks/webhook-ORDER_CREATED-2026-09-10T23-37-04-735Z.json |
 | V8 | Reembolso: webhook recibido, estado de orden, liberación de aforo | **PASA** | NO hay webhook propio de refund: llega como "ORDER.UPDATED" + "ISSUED_TICKET.UPDATED" · orden or_81117157: "status" = "cancelled" · "refund_amount" = 0 (0 en cuenta gratis) · "status_message" trae la nota del dashboard · boletos: "status" = "voided" con "voided_at" unix (2 anulados) · aforo LIBERADO en caché vía webhook | /dumps/webhooks/webhook-ORDER_UPDATED-2026-08-13T18-54-27-494Z.json |
 | V9 | Datos de cliente: reconstruir base por email desde /v1/orders | **PASA** | comprador en "buyer_details" con campos: {address, custom_questions, email, first_name, last_name, name, phone} | /dumps/v9-orders-2026-08-13T18-45-46-038Z.json |
 | V10 | Check-in: boletos escaneados visibles por API | **PASA** | endpoint que respondió 200: "/check_ins" · en issued_ticket it_133138416: "checked_in" = "false" | /dumps/v10-checkins-2026-08-13T18-45-48-668Z.json |
 | V11 | Redirección post-compra: parámetros tt_* llegan a /gracias | **PASA** | parámetros recibidos: tt_order_id, tt_order_value, tt_event_id, tt_currency | /dumps/v11-gracias-hits-2026-08-13T18-47-20-078Z.json |
 | V12 | Holds: crear hold por API y verificar descuento de aforo | **PASA** | POST /v1/holds → 201 (hold ho_100649) · body correcto: event_id + ticket_type_id[tt_xxx]=cantidad (arreglo estilo PHP, descubierto del error de validación) · efecto: quantity_held 0→1, event.total_holds 0→1; quantity NO baja con holds (solo con vendidos) → restantes vendibles = quantity - quantity_held | /dumps/v12-holds-2026-08-13T18-29-41-135Z.json |
+| V13 | CRÍTICA · Puntos: boleto reclamado + check-in = exactamente 1 punto (idempotente) **(CRÍTICA)** | **PASA** | reclamado + escaneado → otorga: true · total = 1 punto · segunda evaluación → otorga: false · total sigue = 1 · idempotencia por UNIQUE(customer_id, occurrence_id) + INSERT OR IGNORE | /dumps/v13-punto-reclamado-mas-checkin-2026-09-10T17-04-31-755Z.json |
+| V14 | CRÍTICA · Boleto enviado y NO reclamado no otorga punto aunque se escanee **(CRÍTICA)** | **PASA** | enviado + escaneado pero SIN reclamar → otorga: false · total = 0 · reclamo TARDÍO (después del escaneo) → otorga: true · total = 1 | /dumps/v14-enviado-sin-reclamar-no-otorga-2026-09-10T17-04-31-792Z.json |
+| V15 | Dos boletos de la misma función en la misma persona = 1 punto | **PASA** | primer boleto otorga: true · segundo boleto otorga: false · total = 1 punto · filas en loyalty_points = 1 · el ledger es UNIQUE(customer_id, occurrence_id): un punto por persona por FUNCIÓN, no por boleto | /dumps/v15-dos-boletos-misma-funcion-un-punto-2026-09-10T17-04-31-822Z.json |
+| V18 | Fase 2 · ¿"Members only" se combina con seating chart? | **PASA** | ticket type "Planta Baja - El Pase" (tt_6795478): "status" = "members_only" Y "type" = "Seated" a la vez · precio 0 · max_per_order 1 · aforo 50 · cubre 11 ocurrencias de es_2359730 (los ticket types son compartidos por la serie) · valores de "status" vistos en la cuenta: [on_sale, members_only] · de "type": [GA, Seated] | /dumps/v18-members-only-con-seating-chart-2026-09-10T21-38-19-261Z.json |
+| V21 | El Pase · ¿Se puede preaplicar el código de membresía por parámetro en la URL del checkout? | **FALLA** | Parámetros probados en la URL del checkout: ?membership_code=, ?code=, ?membership= → ninguno preaplica el código. Solo funciona el botón "Use membership code" del checkout (copiar y pegar). | /dumps/v21-preaplicar-codigo-por-url-2026-09-10T23-42-04-113Z.json |
+| V22 | El Pase · ¿Una orden de $0 (redención) dispara el webhook igual que una pagada? **(CRÍTICA)** | **PASA** | ORDER.CREATED llegó para la orden or_82725048 con "total" = 0 · "total_paid" = 0 · "subtotal" = 0 · 1 boleto(s) · uno de ellos es el ticket type del pase | /dumps/v22-orden-cero-dispara-webhook-2026-09-10T23-41-14-719Z.json |
+| V23 | BLOQUEANTE · El Pase: ¿asignar ticket types al crear el discount por API? **(CRÍTICA)** | **PASA** | POST /v1/discounts type=fixed_amount → HTTP 201 · monto fijo se manda en "price" (centavos) y vuelve como "face_value_amount" · alcance: "ticket_type_id[tt_xxx]=1" (arreglo estilo PHP, igual que /holds) · OJO: "ticket_type_ids", csv y "ticket_types[]" devuelven 201 con ticket_types:[] — falso positivo que dejaría el código aplicable a TODO el catálogo. Verificar SIEMPRE el eco. · alcance releído: ["tt_6684722"] · fuga a otros shows: 0 | /dumps/v23-discount-alcance-por-ticket-type-2026-09-10T17-08-24-601Z.json |
+| V24 | BLOQUEANTE · El Pase: monto fijo, ¿descuenta por ORDEN o por BOLETO? **(CRÍTICA)** | **FALLA** | PRUEBA REAL: canasta de 2 × $10 ($20) + código fixed_amount de $10 con max_redemptions=1 → TOTAL $0.00 · El descuento se aplicó POR BOLETO (2 × $10), no una vez por orden · "times_redeemed" pasó a 1: el límite cuenta ÓRDENES, así que un solo uso regaló DOS boletos · Confirma también V17 (el límite nativo cuenta órdenes) y agrava su consecuencia · El campo de monto fijo es "price" (centavos) y vuelve como "face_value_amount" | /dumps/v24-monto-fijo-por-orden-o-por-boleto-2026-09-10T19-59-58-852Z.json |
+| V25 | El Pase · Al agotar max_redemptions de la membresía, ¿el boleto deja de aparecer? | **PARCIAL** | membresía im_159964: "redemptions" = 1 · "max_redemptions" = 8 · "is_valid" = "true" (STRING, normalizar) · "redemption_collection" trae 1 entradas · campos: {object, id, created_at, description, issued_membership_id, linked_event_id, linked_order_id} · el límite lo cuenta TT por MEMBRESÍA (no por orden ni por código): cada compra del boleto members-only gasta 1 · sin over_redemption: TT no dejó pasar más de max_redemptions | /dumps/v25-agotar-membresia-2026-09-10T23-41-15-468Z.json |
 
 ## Notas por verificación
 
@@ -46,12 +55,21 @@ Cada hecho está respaldado por dumps en /dumps y por el código del laboratorio
 - **V4**: Transiciones registradas (primer detector): ev_8865698 vía sync @ 2026-08-13T18:42:13.846Z | ev_8865698 vía sync @ 2026-08-13T18:42:13.846Z | ev_8865698 vía sync @ 2026-08-13T18:55:13.843Z. El botón de la cartelera se puso gris solo en ambas direcciones (agotado y liberación post-reembolso).
 - **V5**: Configura una función con fecha de inicio de venta futura (TESTPLAN paso 6) y vuelve a correr.
 - **V6**: Limitación de cuenta test: eventos gratis (price=0). La estructura de precio por categoría está verificada; los montos reales se confirman en la cuenta pagada del cliente. Para el asiento: compra en el evento con seating chart.
-- **V7**: 21 webhooks en log. La lista completa de eventos disponibles se ve al configurar el webhook en el dashboard — anótala en /admin (editar notas).
+- **V7**: No llegó ningún header de firma. Hallazgo V7: el dashboard no expone signing secret y el request no viene firmado — la provenance se valida releyendo la orden por API (GET /v1/orders/{id}), nunca confiando en el payload.
 - **V8**: Cancelación gratis: refund_amount quedó 0. En cuenta pagada, verificar que refund_amount refleje el monto devuelto.
 - **V9**: 3 órdenes leídas · 2 clientes únicos reconstruidos por email en la tabla customers.
 - **V10**: Escanea un boleto con la app oficial de Check-in (TESTPLAN paso 9) y vuelve a correr.
 - **V11**: tt_order_id=81118285 llegó y el detalle de la orden se obtuvo del API.
 - **V12**: Sirve para asientos de prensa/VIP. El hold de prueba ho_100649 sigue activo en ev_8865698: bórralo desde el dashboard si estorba.
+- **V13**: El punto se otorga al escanear (no al reclamar) y reevaluar no duplica.
+- **V14**: Quien no reclama no acumula. Y el reclamo posterior al escaneo sí otorga: por eso se evalúa en los dos eventos.
+- **V15**: Quedarse con 2 boletos de la misma función da 1 punto.
+- **V18**: A FAVOR: el "Abono Butaca" es viable. Un ticket type Members only CON butacas del seating chart permite que el abonado escoja asiento real sin usar códigos de descuento — lo que esquiva por completo el fallo de V24 (el monto fijo se aplicaba por boleto). Además "max_per_order" se fija SOLO en este ticket type, así que no afecta las compras regulares. El ticket type se crea a mano en el dashboard: el API no los crea (404), solo los refleja.
+- **V21**: Fricción real del flujo de reserva, aceptada para el MVP: el perfil muestra el código grande con botón Copiar y los tres pasos. Si TT documenta un parámetro para esto, se añade al botón Reservar sin tocar el modelo.
+- **V22**: Las órdenes a $0 disparan ORDER.CREATED igual que las pagadas: la redención del pase se ingiere por el mismo camino. Los créditos de TT no se pueden leer por API — confirmar en el dashboard (Billing) si una orden gratis consume crédito.
+- **V23**: A FAVOR: el modelo de un código por show SÍ se puede automatizar por API. El alcance persiste al releer y no se filtra a otros shows.
+- **V24**: BLOQUEANTE EN CONTRA. Un código de monto fijo de $X descuenta $X por CADA boleto del ticket type en la canasta, y max_redemptions solo cuenta órdenes: con un uso, un abonado mete N butacas y se las lleva todas gratis. El modelo de "un código de monto fijo por show" NO se sostiene: hay que replantear antes de construir El Pase. Alternativas a evaluar: (a) max_per_order=1 en el ticket type del abonado, si TT lo permite por ticket type; (b) un ticket type "Members only" exclusivo del pase con su propio aforo; (c) emitir un código distinto por función en vez de uno por show.
+- **V25**: Aún no se agota: 1/8. Reserva funciones hasta llegar al límite y vuelve a correr.
 
 ## Latencia hasta botón gris (V4)
 
@@ -61,15 +79,80 @@ Cada hecho está respaldado por dumps en /dumps y por el código del laboratorio
 | ev_8865698 | sync | 2026-08-13T18:42:13.846Z |
 | ev_8865698 | sync | 2026-08-13T18:55:13.843Z |
 | ev_8865698 | sync | 2026-08-13T19:37:10.610Z |
+| ev_8865698 | sync | 2026-09-03T15:12:17.809Z |
+| ev_8865698 | sync | 2026-09-09T20:09:57.161Z |
+| ev_8865698 | sync | 2026-09-10T15:00:40.856Z |
+| ev_8865698 | sync | 2026-09-10T15:01:40.614Z |
+| ev_8865698 | sync | 2026-09-10T15:02:11.029Z |
+| ev_8865698 | sync | 2026-09-10T15:02:17.375Z |
+| ev_8865698 | sync | 2026-09-10T15:03:16.987Z |
+| ev_8865698 | sync | 2026-09-10T15:03:23.595Z |
+| ev_8865698 | sync | 2026-09-10T15:03:33.343Z |
+| ev_8865698 | sync | 2026-09-10T15:03:38.140Z |
+| ev_8865698 | sync | 2026-09-10T15:04:38.086Z |
+| ev_8865698 | sync | 2026-09-10T15:05:38.111Z |
+| ev_8865698 | sync | 2026-09-10T15:06:10.522Z |
+| ev_8865698 | sync | 2026-09-10T15:06:32.263Z |
+| ev_8865698 | sync | 2026-09-10T15:06:41.556Z |
+| ev_8865698 | sync | 2026-09-10T15:06:46.534Z |
+| ev_8865698 | sync | 2026-09-10T15:07:00.111Z |
+| ev_8865698 | sync | 2026-09-10T15:07:30.608Z |
+| ev_8865698 | sync | 2026-09-10T15:07:39.121Z |
+| ev_8865698 | sync | 2026-09-10T15:07:58.100Z |
+| ev_8865698 | sync | 2026-09-10T15:08:57.769Z |
+| ev_8865698 | sync | 2026-09-10T16:40:35.484Z |
+| ev_8865698 | sync | 2026-09-10T16:41:35.523Z |
+| ev_8865698 | sync | 2026-09-10T16:46:10.062Z |
+| ev_8865698 | sync | 2026-09-10T16:46:15.225Z |
+| ev_8865698 | sync | 2026-09-10T16:47:15.752Z |
+| ev_8865698 | sync | 2026-09-10T16:47:34.595Z |
+| ev_8865698 | sync | 2026-09-10T16:47:41.287Z |
+| ev_8865698 | sync | 2026-09-10T16:47:46.223Z |
+| ev_8865698 | sync | 2026-09-10T16:48:03.232Z |
+| ev_8865698 | sync | 2026-09-10T16:48:12.212Z |
+| ev_8865698 | sync | 2026-09-10T16:48:16.340Z |
+| ev_8865698 | sync | 2026-09-10T16:48:21.271Z |
+| ev_8865698 | sync | 2026-09-10T16:48:57.964Z |
+| ev_8865698 | sync | 2026-09-10T16:49:02.701Z |
+| ev_8865698 | sync | 2026-09-10T16:49:52.807Z |
+| ev_8865698 | sync | 2026-09-10T16:50:00.673Z |
+| ev_8865698 | sync | 2026-09-10T16:50:08.560Z |
+| ev_8865698 | sync | 2026-09-10T16:50:11.996Z |
+| ev_8865698 | sync | 2026-09-10T16:50:18.495Z |
+| ev_8865698 | sync | 2026-09-10T16:51:18.512Z |
+| ev_8865698 | sync | 2026-09-10T17:03:39.724Z |
+| ev_8865698 | sync | 2026-09-10T17:03:42.068Z |
+| ev_8865698 | sync | 2026-09-10T17:04:55.876Z |
+| ev_8865698 | sync | 2026-09-10T17:07:25.616Z |
+| ev_8865698 | sync | 2026-09-10T17:07:41.361Z |
+| ev_8865698 | sync | 2026-09-10T17:08:12.633Z |
+| ev_8865698 | sync | 2026-09-10T18:16:59.645Z |
+| ev_8865698 | sync | 2026-09-10T18:17:59.749Z |
+| ev_8865698 | sync | 2026-09-10T18:37:08.591Z |
+| ev_8865698 | sync | 2026-09-10T19:06:56.089Z |
+| ev_8865698 | sync | 2026-09-10T19:14:12.213Z |
+| ev_8865698 | sync | 2026-09-10T19:20:15.292Z |
+| ev_8865698 | sync | 2026-09-10T19:21:18.964Z |
+| ev_8865698 | sync | 2026-09-10T19:26:57.197Z |
+| ev_8865698 | sync | 2026-09-10T20:00:48.338Z |
+| ev_8865698 | sync | 2026-09-10T21:39:07.968Z |
+| ev_8865698 | sync | 2026-09-10T21:51:07.879Z |
+| ev_8865698 | sync | 2026-09-10T21:55:07.871Z |
+| ev_8865698 | sync | 2026-09-10T21:58:25.302Z |
+| ev_8865698 | sync | 2026-09-10T23:44:14.088Z |
+| ev_8865698 | sync | 2026-09-10T23:49:24.982Z |
 
 ## Webhooks recibidos por tipo
 
-- `EVENT.CREATED`: 5
-- `EVENT.UPDATED`: 4
+- `EVENT.CREATED`: 11
+- `EVENT.UPDATED`: 10
 - `ISSUED_TICKET.CREATED`: 4
-- `ISSUED_TICKET.UPDATED`: 2
-- `ORDER.CREATED`: 3
+- `ISSUED_TICKET.UPDATED`: 3
+- `ORDER.CREATED`: 6
 - `ORDER.UPDATED`: 3
+- `PING.PRECHECK`: 1
+- `PING.TEST`: 1
+- `PING.TUNEL.USUARIO`: 1
 
 ## Campos literales por recurso (field_discovery)
 
@@ -84,6 +167,22 @@ Nombres observados en JSON real del API — no en la doc:
 - `last_name` — ejemplo: `"TEST"`
 - `name` — ejemplo: `"JAVIER TEST"`
 - `phone` — ejemplo: `null`
+### `discounts`
+
+- `booking_fee_amount` — ejemplo: `0`
+- `booking_fee_percentage` — ejemplo: `null`
+- `code` — ejemplo: `"PASE-V239013"`
+- `expires` — ejemplo: `null`
+- `face_value_amount` — ejemplo: `2400`
+- `face_value_percentage` — ejemplo: `null`
+- `id` — ejemplo: `"di_598923"`
+- `max_redemptions` — ejemplo: `1`
+- `name` — ejemplo: `"V23 · alcance por ticket type"`
+- `object` — ejemplo: `"discount"`
+- `products` — ejemplo: `[]`
+- `ticket_types` — ejemplo: `["tt_6684722"]`
+- `times_redeemed` — ejemplo: `0`
+- `type` — ejemplo: `"fixed_amount"`
 ### `event_series`
 
 - `access_code` — ejemplo: `null`
@@ -179,6 +278,26 @@ Nombres observados en JSON real del API — no en la doc:
 - `waitlist_call_to_action` — ejemplo: `"Join waiting list"`
 - `waitlist_confirmation_message` — ejemplo: `"Done! You are on the waiting list."`
 - `waitlist_event_page_text` — ejemplo: `"Join our waiting list to be notified when tickets become available."`
+### `issued_memberships`
+
+- `benefits` — ejemplo: `[]`
+- `code` — ejemplo: `"MM3K5QLHZ"`
+- `email` — ejemplo: `"jwvelez+probe@gmail.com"`
+- `first_name` — ejemplo: `"Probe"`
+- `full_name` — ejemplo: `"Probe Test"`
+- `id` — ejemplo: `"im_159964"`
+- `is_valid` — ejemplo: `"true"`
+- `issue_date` — ejemplo: `{"date":"2026-09-10","formatted":"Thu 10 Sep 2026 9:40 PM","iso":"2026-09-10T21:40:46+00:00","time":"21:40","timezone":"`
+- `last_name` — ejemplo: `"Test"`
+- `max_redemptions` — ejemplo: `null`
+- `membership_type_id` — ejemplo: `"mt_9760"`
+- `membership_type_name` — ejemplo: `"Abonados 2026"`
+- `object` — ejemplo: `"issued_membership"`
+- `redemption_collection` — ejemplo: `[]`
+- `redemptions` — ejemplo: `0`
+- `valid_from` — ejemplo: `{"date":"2026-09-10","formatted":"Thu 10 Sep 2026 5:40 PM","iso":"2026-09-10T17:40:46-04:00","time":"17:40","timezone":"`
+- `valid_to` — ejemplo: `{"date":"2026-11-04","formatted":"Wed 4 Nov 2026 12:00 AM","iso":"2026-11-04T00:00:00-05:00","time":"00:00","timezone":"`
+- `voided_at` — ejemplo: `null`
 ### `issued_tickets`
 
 - `add_on_id` — ejemplo: `null`
@@ -208,6 +327,40 @@ Nombres observados en JSON real del API — no en la doc:
 - `ticket_type_id` — ejemplo: `"tt_6684870"`
 - `updated_at` — ejemplo: `1786644705`
 - `voided_at` — ejemplo: `null`
+### `line_items`
+
+- `booking_fee` — ejemplo: `0`
+- `description` — ejemplo: `"El Pase"`
+- `id` — ejemplo: `"li_sim1"`
+- `item_id` — ejemplo: `"pr_80783"`
+- `object` — ejemplo: `"line_item"`
+- `quantity` — ejemplo: `1`
+- `store_id` — ejemplo: `null`
+- `total` — ejemplo: `0`
+- `type` — ejemplo: `"ticket"`
+- `value` — ejemplo: `0`
+### `membership_redemptions`
+
+- `created_at` — ejemplo: `"2026-09-10T23:37:04+00:00"`
+- `description` — ejemplo: `""`
+- `id` — ejemplo: `"ir_214919"`
+- `issued_membership_id` — ejemplo: `"im_159964"`
+- `linked_event_id` — ejemplo: `null`
+- `linked_order_id` — ejemplo: `"or_82725048"`
+- `object` — ejemplo: `"issued_membership_redemption"`
+### `membership_types`
+
+- `conditions_and_benefits` — ejemplo: `[]`
+- `id` — ejemplo: `"mt_9760"`
+- `max_redemptions` — ejemplo: `8`
+- `name` — ejemplo: `"Abonados 2026"`
+- `object` — ejemplo: `"membership_type"`
+- `photo_required` — ejemplo: `"false"`
+- `valid_from_date` — ejemplo: `null`
+- `valid_from_type` — ejemplo: `"relative"`
+- `valid_to_date` — ejemplo: `{"date":"2026-11-04","formatted":"Wed 4 Nov 2026 12:00 AM","iso":"2026-11-04T00:00:00-05:00","time":"00:00","timezone":"`
+- `valid_to_relative_days` — ejemplo: `null`
+- `valid_to_type` — ejemplo: `"fixed"`
 ### `orders`
 
 - `buyer_details` — ejemplo: `{"address":{"address_1":null,"address_2":null,"address_3":null,"postal_code":null},"custom_questions":[],"email":"jwvele`
@@ -235,6 +388,29 @@ Nombres observados en JSON real del API — no en la doc:
 - `total` — ejemplo: `0`
 - `total_paid` — ejemplo: `0`
 - `txn_id` — ejemplo: `"--"`
+### `products`
+
+- `booking_fee` — ejemplo: `0`
+- `created_at` — ejemplo: `{"date":"2026-09-10","formatted":"Thu Sep 10, 2026 9:33 PM","iso":"2026-09-10T21:33:15-04:00","time":"21:33","timezone":`
+- `currency` — ejemplo: `"USD"`
+- `description` — ejemplo: `"Date El Pase"`
+- `event_series_ids` — ejemplo: `null`
+- `fulfilment_reference_id` — ejemplo: `9760`
+- `fulfilment_type` — ejemplo: `"ISSUED_MEMBERSHIP"`
+- `id` — ejemplo: `"pr_80783"`
+- `image` — ejemplo: `null`
+- `instructions` — ejemplo: `null`
+- `issued_count` — ejemplo: `0`
+- `linked_to_all_event_series` — ejemplo: `"false"`
+- `name` — ejemplo: `"El Pase"`
+- `object` — ejemplo: `"product"`
+- `price` — ejemplo: `25600`
+- `quantity` — ejemplo: `20`
+- `quantity_per_event_occurrence` — ejemplo: `null`
+- `sell_in_store` — ejemplo: `"true"`
+- `status` — ejemplo: `"ON_SALE"`
+- `updated_at` — ejemplo: `{"date":"2026-09-10","formatted":"Thu Sep 10, 2026 9:33 PM","iso":"2026-09-10T21:33:15-04:00","time":"21:33","timezone":`
+- `variant` — ejemplo: `null`
 ### `ticket_types`
 
 - `access_code` — ejemplo: `null`
@@ -481,6 +657,18 @@ Nombres observados en JSON real del API — no en la doc:
 - `total` — ejemplo: `0`
 - `total_paid` — ejemplo: `0`
 - `txn_id` — ejemplo: `"--"`
+### `webhook_PING.PRECHECK`
+
+- `event` — ejemplo: `"PING.PRECHECK"`
+- `id` — ejemplo: `"wh_precheck_1"`
+### `webhook_PING.TEST`
+
+- `event` — ejemplo: `"PING.TEST"`
+- `id` — ejemplo: `"wh_probe_tunnel"`
+### `webhook_PING.TUNEL.USUARIO`
+
+- `event` — ejemplo: `"PING.TUNEL.USUARIO"`
+- `id` — ejemplo: `"wh_probe_user_tunnel"`
 ### `webhook_envelope`
 
 - `created_at` — ejemplo: `"2026-08-13 18:10:32"`
@@ -492,4 +680,6 @@ Nombres observados en JSON real del API — no en la doc:
 ## Riesgos encontrados
 
 - **V5 · PARCIAL** — Venta no abierta: fecha de inicio de venta expuesta. Configura una función con fecha de inicio de venta futura (TESTPLAN paso 6) y vuelve a correr.
-- **V6 · PARCIAL** — CRÍTICA · Asientos: categorías, precios, sección/fila/asiento. Limitación de cuenta test: eventos gratis (price=0). La estructura de precio por categoría está verificada; los montos reales se confirman en la cuenta pagada del cliente. Para el asiento: compra en el evento con seating chart.
+- **V21 · FALLA** — El Pase · ¿Se puede preaplicar el código de membresía por parámetro en la URL del checkout?. Fricción real del flujo de reserva, aceptada para el MVP: el perfil muestra el código grande con botón Copiar y los tres pasos. Si TT documenta un parámetro para esto, se añade al botón Reservar sin tocar el modelo.
+- **V24 · FALLA** — BLOQUEANTE · El Pase: monto fijo, ¿descuenta por ORDEN o por BOLETO?. BLOQUEANTE EN CONTRA. Un código de monto fijo de $X descuenta $X por CADA boleto del ticket type en la canasta, y max_redemptions solo cuenta órdenes: con un uso, un abonado mete N butacas y se las lleva todas gratis. El modelo de "un código de monto fijo por show" NO se sostiene: hay que replantear antes de construir El Pase. Alternativas a evaluar: (a) max_per_order=1 en el ticket type del abonado, si TT lo permite por ticket type; (b) un ticket type "Members only" exclusivo del pase con su propio aforo; (c) emitir un código distinto por función en vez de uno por show.
+- **V25 · PARCIAL** — El Pase · Al agotar max_redemptions de la membresía, ¿el boleto deja de aparecer?. Aún no se agota: 1/8. Reserva funciones hasta llegar al límite y vuelve a correr.

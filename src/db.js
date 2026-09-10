@@ -186,6 +186,99 @@ CREATE TABLE IF NOT EXISTS debug_messages (
   data TEXT,
   received_at TEXT
 );
+
+-- ---------- Compartir boletos con el corillo ----------
+-- Quién tiene cada boleto. Una fila por issued_ticket (el comprador arranca como 'owner').
+CREATE TABLE IF NOT EXISTS ticket_assignments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  issued_ticket_id TEXT UNIQUE NOT NULL,
+  occurrence_id TEXT,
+  holder_email TEXT,                -- a quién le toca este boleto
+  holder_customer_id INTEGER,       -- null hasta que lo reclama
+  status TEXT DEFAULT 'owner',      -- owner | sent | claimed | revoked
+  sent_at TEXT,
+  claimed_at TEXT,
+  revoked_at TEXT,
+  claim_token_hash TEXT,            -- solo el hash; el token vive en el enlace del correo
+  claim_expires_at TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
+
+-- Ledger de puntos. UNIQUE(customer, occurrence) = un punto por persona por FUNCIÓN,
+-- no por boleto: si alguien se queda con 2 boletos de la misma función, gana 1.
+CREATE TABLE IF NOT EXISTS loyalty_points (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  occurrence_id TEXT NOT NULL,
+  issued_ticket_id TEXT,            -- el boleto que lo originó (informativo)
+  points INTEGER NOT NULL DEFAULT 1,
+  awarded_at TEXT,
+  UNIQUE (customer_id, occurrence_id)
+);
+
+-- ---------- El Pase (pase de temporada sobre MEMBRESÍAS nativas de TT) ----------
+-- Un pase = un membership type + un producto + un ticket type "members only" por planta.
+-- TT hace cumplir el acceso y LLEVA EL CONTADOR (issued_membership.redemptions).
+-- Estas tablas son ESPEJO para el perfil y para detectar anomalías, no guardia.
+CREATE TABLE IF NOT EXISTS pass_products (
+  id TEXT PRIMARY KEY,              -- slug propio, ej. 'pase-2026-baja'
+  name TEXT NOT NULL,
+  planta TEXT,                      -- 'baja' | 'alta'
+  tt_product_id TEXT NOT NULL,      -- pr_xxx: lo que compra el abonado
+  membership_type_id TEXT NOT NULL, -- mt_xxx: lo que TT le emite al comprar
+  ticket_type_id TEXT NOT NULL,     -- tt_xxx: el boleto $0 "members only" que ve el abonado
+  show_id TEXT,                     -- serie donde vive ese ticket type
+  price_cents INTEGER,              -- lo que paga (sin fees)
+  max_redemptions INTEGER,          -- espejo del membership type
+  season_end TEXT,                  -- ISO: espejo de valid_to del membership type
+  store_url TEXT,                   -- enlace de compra del producto (se abre en el modal)
+  active INTEGER DEFAULT 1,
+  raw TEXT,                         -- JSON de product + membership_type + ticket_type
+  created_at TEXT,
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS season_passes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER,
+  pass_product_id TEXT NOT NULL,
+  order_id TEXT,                    -- la orden con que compró el producto
+  issued_membership_id TEXT UNIQUE, -- im_xxx (null mientras TT no la haya emitido)
+  membership_code TEXT,             -- el "code" de la membresía
+  -- pending: compra vista pero membresía aún no localizada en TT (se reintenta)
+  status TEXT DEFAULT 'pending',    -- pending | active | exhausted | expired | voided
+  redemptions INTEGER DEFAULT 0,    -- espejo de TT
+  max_redemptions INTEGER,
+  valid_from TEXT,
+  valid_to TEXT,
+  last_synced_at TEXT,
+  raw TEXT,                         -- último JSON del issued_membership
+  created_at TEXT,
+  updated_at TEXT
+);
+
+-- Espejo de cada redención: la orden a $0 con el ticket type del pase.
+CREATE TABLE IF NOT EXISTS pass_redemptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  season_pass_id INTEGER NOT NULL,
+  order_id TEXT NOT NULL,
+  occurrence_id TEXT,
+  issued_ticket_id TEXT,
+  tickets_count INTEGER NOT NULL DEFAULT 1,
+  redeemed_at TEXT,
+  UNIQUE (season_pass_id, order_id)
+);
+
+-- Lo que NO debería pasar. Ruidoso en /admin, nunca se arregla en silencio.
+CREATE TABLE IF NOT EXISTS pass_anomalies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  season_pass_id INTEGER,
+  kind TEXT NOT NULL,
+  detail TEXT,                      -- JSON
+  detected_at TEXT,
+  resolved_at TEXT
+);
 `);
 
 // Columnas ricas del boleto (FINDINGS: qr_code_url, description, listed_price, etc.)
@@ -210,6 +303,15 @@ const SEED_VERIFICATIONS = [
   ['V10', 'Check-in: boletos escaneados visibles por API', 0],
   ['V11', 'Redirección post-compra: parámetros tt_* llegan a /gracias', 0],
   ['V12', 'Holds: crear hold por API y verificar descuento de aforo', 0],
+  ['V13', 'CRÍTICA · Puntos: boleto reclamado + check-in = exactamente 1 punto (idempotente)', 1],
+  ['V14', 'CRÍTICA · Boleto enviado y NO reclamado no otorga punto aunque se escanee', 1],
+  ['V15', 'Dos boletos de la misma función en la misma persona = 1 punto', 0],
+  ['V18', 'El Pase · ¿"Members only" convive con seating chart?', 1],
+  ['V21', 'El Pase · ¿Se puede preaplicar el código de membresía por parámetro en la URL del checkout?', 0],
+  ['V22', 'El Pase · ¿Una orden de $0 (redención) dispara el webhook igual que una pagada?', 1],
+  ['V23', 'BLOQUEANTE · El Pase: ¿asignar ticket types al crear el discount por API?', 1],
+  ['V24', 'BLOQUEANTE · El Pase: monto fijo, ¿descuenta por ORDEN o por BOLETO?', 1],
+  ['V25', 'El Pase · Al agotar max_redemptions de la membresía, ¿el boleto deja de aparecer?', 0],
 ];
 
 const insertVerification = db.prepare(

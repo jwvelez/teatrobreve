@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import { db, now, recordFieldDiscovery, setVerification } from './db.js';
 import { dump, pick, ttRequest, hasApiKey } from './ttClient.js';
 import { updateAvailability } from './sync.js';
+import { ensureAssignment, evaluatePointsForTicket } from './sharing.js';
+import { passProductInOrder, registerPassPurchase, recordPassRedemption, ingestMembershipWebhook } from './pase.js';
 
 /**
  * Verificación de firma por DESCUBRIMIENTO (V7).
@@ -142,6 +144,10 @@ export async function handleWebhook(rawBody, headers) {
     if (/check.?in|scan/i.test(String(eventType))) {
       processCheckin(obj);
     }
+    if (/membership/i.test(String(eventType))) {
+      // ISSUED_MEMBERSHIP.CREATED / UPDATED: el payload ES la membresía
+      await ingestMembershipWebhook(obj);
+    }
     db.prepare('UPDATE webhook_log SET processed = 1 WHERE tt_event_id = ?').run(String(eventId));
   } catch (err) {
     console.error('[webhook] error procesando:', err.message);
@@ -191,12 +197,16 @@ export async function processOrder(order, source) {
   db.prepare(`
     INSERT INTO orders (id, customer_email, occurrence_id, total_cents, currency, status, source, raw, created_at, updated_at)
     VALUES (@id, @email, @occ, @total, @currency, @status, @source, @raw, @created, @updated)
-    ON CONFLICT(id) DO UPDATE SET status=@status, raw=@raw, updated_at=@updated
+    ON CONFLICT(id) DO UPDATE SET status=@status, raw=@raw, updated_at=@updated,
+      total_cents=COALESCE(@total, total_cents), currency=COALESCE(@currency, currency),
+      occurrence_id=COALESCE(@occ, occurrence_id), customer_email=COALESCE(@email, customer_email)
   `).run({
     id: String(order.id ?? crypto.randomUUID()),
     email: email ? String(email).toLowerCase() : null,
     occ: occurrenceId != null ? String(occurrenceId) : null,
-    total: Number(pick(order, ['total', 'total_paid', 'amount', 'order_value']).value) || null,
+    // 0 es un total válido (redenciones del pase, eventos gratis): no convertirlo en null
+    total: Number.isFinite(Number(pick(order, ['total', 'total_paid', 'amount', 'order_value']).value))
+      ? Number(pick(order, ['total', 'total_paid', 'amount', 'order_value']).value) : null,
     // "currency" en el JSON real es un objeto {base_multiplier, code}: preferir .code
     currency: stringifyVal(pick(order, ['currency.code', 'currency']).value),
     status: stringifyVal(pick(order, ['status', 'state']).value),
@@ -211,6 +221,17 @@ export async function processOrder(order, source) {
     for (const t of tickets) {
       upsertTicket(t, { orderId: order.id, occurrenceId, buyerEmail: email });
     }
+  }
+
+  // ---------- El Pase ----------
+  // 1) ¿Esta orden COMPRA el producto del pase? → registrar y localizar la membresía.
+  // 2) ¿Esta orden REDIME (boleto $0 "members only")? → espejo + releer contador de TT.
+  try {
+    const product = passProductInOrder(order);
+    if (product && email) await registerPassPurchase({ order, product, email: String(email).toLowerCase() });
+    await recordPassRedemption(order);
+  } catch (err) {
+    console.error('[pase] error procesando la orden:', err.message);
   }
 
   // Refresh inmediato de disponibilidad del evento afectado (vía webhook, para medir V4)
@@ -240,11 +261,21 @@ export function upsertTicket(t, { orderId, occurrenceId, buyerEmail } = {}) {
   const checkedIn = t.checked_in === true || t.checked_in === 'true' ? 1 : 0;
   const ticketEmail = stringifyVal(pick(t, ['email']).value)?.toLowerCase() ?? null;
   const occ = stringifyVal(pick(t, ['event_id']).value) ?? (occurrenceId != null ? String(occurrenceId) : null);
-  // Asiento: "reservation" existe pero llega null en compras GA (degradar con gracia)
+  // Asiento: "reservation" llega null en compras GA. En compras SEATED llega como
+  // STRING con la etiqueta de la butaca (primera vez observado: "23-3" en
+  // it_135898047, ticket type Seated "Planta Baja - El Pase"), no como objeto.
+  // Se guarda la etiqueta entera en seat_number; si algún día viene objeto, se
+  // descompone. La sección es el ticket type (Planta Baja / Alta).
   const reservation = pick(t, ['reservation']).value;
-  const seatSection = pick(reservation ?? {}, ['section', 'section_name']).value ?? null;
-  const seatRow = pick(reservation ?? {}, ['row', 'row_name']).value ?? null;
-  const seatNumber = pick(reservation ?? {}, ['seat', 'seat_number', 'number', 'label']).value ?? null;
+  let seatSection = null, seatRow = null, seatNumber = null;
+  if (typeof reservation === 'string' && reservation.trim()) {
+    seatNumber = reservation.trim();
+    seatSection = pick(t, ['description']).value ? String(pick(t, ['description']).value).replace(/\s*-\s*El Pase$/i, '') : null;
+  } else if (reservation && typeof reservation === 'object') {
+    seatSection = pick(reservation, ['section', 'section_name']).value ?? null;
+    seatRow = pick(reservation, ['row', 'row_name']).value ?? null;
+    seatNumber = pick(reservation, ['seat', 'seat_number', 'number', 'label']).value ?? null;
+  }
 
   db.prepare(`
     INSERT INTO issued_tickets (
@@ -286,6 +317,16 @@ export function upsertTicket(t, { orderId, occurrenceId, buyerEmail } = {}) {
     updated: now(),
   });
 
+  // Reparto del corillo: el comprador arranca como dueño de cada boleto.
+  // ensureAssignment es idempotente: no pisa un envío ni un reclamo ya hechos.
+  ensureAssignment({
+    ticketId: t.id,
+    occurrenceId: occ,
+    buyerEmail: buyerEmail ?? ticketEmail,
+  });
+  // El check-in puede llegar ANTES del reclamo: reevaluar en cada ingesta.
+  evaluatePointsForTicket(t.id);
+
   const attendanceEmail = ticketEmail ?? (buyerEmail ? String(buyerEmail).toLowerCase() : null);
   if (attendanceEmail && occ) {
     db.prepare(`
@@ -308,6 +349,8 @@ function processCheckin(obj) {
       .run(stringifyVal(at) ?? now(), String(ticketId));
     db.prepare('UPDATE attendance SET attended = 1, checked_in_at = ? WHERE ticket_id = ?')
       .run(stringifyVal(at) ?? now(), String(ticketId));
+    // El escaneo es el evento que otorga el punto (si el boleto ya está reclamado).
+    evaluatePointsForTicket(ticketId);
   }
 }
 

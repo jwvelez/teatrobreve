@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Repartir boletos · Teatro</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=Martian+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .orden-wrap { max-width: 780px; margin: 0 auto; padding: 32px 16px 80px; }
+  .back { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim); text-decoration: none; }
+  .orden-head h1 { font-size: clamp(24px, 5vw, 34px); letter-spacing: -0.02em; margin: 10px 0 4px; }
+  .orden-sub { color: var(--text-dim); font-size: 14px; margin-bottom: 26px; }
+
+  .tk {
+    background: var(--surface); border: 1px solid var(--surface-2); border-radius: 12px;
+    padding: 16px; margin-bottom: 12px;
+  }
+  .tk-top { display: flex; gap: 14px; align-items: flex-start; }
+  .tk-qr { width: 62px; height: 62px; border-radius: 8px; background: #fff; flex: 0 0 auto; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .tk-qr img { width: 100%; height: 100%; object-fit: contain; }
+  .tk-info { flex: 1 1 auto; min-width: 0; }
+  .tk-title { font-weight: 600; font-size: 16px; }
+  .tk-meta { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin-top: 4px; }
+  .tk-seat { font-size: 13px; color: var(--text); margin-top: 6px; }
+  .tk-seat.ga { color: var(--text-dim); }
+
+  .estado { font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+  .estado.mio { background: var(--accent); color: #0B1211; }
+  .estado.enviado { background: transparent; border: 1px solid var(--text-dim); color: var(--text-dim); }
+  .estado.reclamado { background: var(--surface-2); color: var(--text); }
+  .estado.anulado { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+
+  .tk-form { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .tk-form input {
+    flex: 1 1 220px; min-height: 44px; padding: 0 13px; border-radius: 10px;
+    background: var(--bg); border: 1px solid var(--surface-2); color: var(--text);
+    font-family: var(--font-body); font-size: 15px;
+  }
+  .tk-form input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .tk-form input.invalid { outline: 2px solid var(--danger); }
+  .tk-note { font-size: 12px; color: var(--text-dim); margin-top: 10px; }
+  .tk-note.err { color: var(--danger); }
+  .tk-note.ok { color: var(--accent); }
+  .btn-ghost { background: transparent; border: 1px solid var(--surface-2); color: var(--text-dim); border-radius: 10px; min-height: 44px; padding: 0 14px; cursor: pointer; }
+
+  .aviso { background: var(--surface); border: 1px solid var(--surface-2); border-left: 3px solid var(--accent); border-radius: 8px; padding: 14px 16px; font-size: 13px; color: var(--text-dim); margin-bottom: 24px; line-height: 1.5; }
+  @media (max-width: 560px) { .tk-form input { flex-basis: 100%; } }
+</style>
+</head>
+<body>
+<div class="orden-wrap" id="app"><div class="loading">Cargando la orden…</div></div>
+
+<script>
+const MESES_AB = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'];
+const DOW_AB = ['DOM','LUN','MAR','MIÉ','JUE','VIE','SÁB'];
+const orderId = location.pathname.split('/').pop();
+let state = { data: null, error: null, msg: {} };
+
+async function load() {
+  const r = await fetch(`/api/orden/${encodeURIComponent(orderId)}`);
+  if (r.status === 401) { location.href = '/entrar'; return; }
+  if (!r.ok) { state.error = (await r.json()).error ?? 'No se pudo cargar la orden'; return render(); }
+  state.data = await r.json();
+  render();
+}
+
+function fmt12(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2,'0')} ${ampm}`;
+}
+function metaLine(t) {
+  const parts = [];
+  if (t.date) {
+    const [y, m, d] = t.date.split('-').map(Number);
+    parts.push(`${DOW_AB[new Date(y, m-1, d).getDay()]} ${d} ${MESES_AB[m-1]}`);
+  }
+  if (t.time) parts.push(fmt12(t.time));
+  if (t.planta) parts.push(t.planta.toUpperCase());
+  return parts.join(' · ');
+}
+// El asiento vive en "reservation" del boleto y llega null en compras GA: degradar.
+function seatLine(t) {
+  if (!t.seat?.label) return `<div class="tk-seat ga">${esc(t.planta ?? 'Entrada general')} — sin asiento asignado</div>`;
+  return `<div class="tk-seat">${esc([t.planta, t.seat.label].filter(Boolean).join(' - '))}</div>`;
+}
+
+function estadoTag(t) {
+  if (t.voided) return `<span class="estado anulado">Anulado</span>`;
+  if (t.shareStatus === 'claimed') return `<span class="estado reclamado">Reclamado por ${esc(t.holderEmail)}</span>`;
+  if (t.shareStatus === 'sent') return `<span class="estado enviado">Enviado a ${esc(t.holderEmail)}</span>`;
+  return `<span class="estado mio">Mío</span>`;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function render() {
+  const app = document.getElementById('app');
+  if (state.error) { app.innerHTML = `<div class="empty">${esc(state.error)} <a href="/mi-cuenta" style="color:var(--accent)">Volver</a></div>`; return; }
+  if (!state.data) { app.innerHTML = '<div class="loading">Cargando la orden…</div>'; return; }
+
+  const { tickets } = state.data;
+  app.innerHTML = `
+    <a class="back" href="/mi-cuenta">← Mi cuenta</a>
+    <div class="orden-head">
+      <h1>Repartir boletos</h1>
+      <div class="orden-sub">${tickets.length} ${tickets.length === 1 ? 'boleto' : 'boletos'} en esta compra</div>
+    </div>
+    <div class="aviso">
+      Escribe el correo de cada persona y dale Enviar. Le llega su boleto con el QR y un botón
+      para reclamarlo en su cuenta. <strong>El punto se gana cuando escanean el código en la
+      puerta</strong>, y solo lo gana quien haya reclamado el boleto.
+    </div>
+    ${tickets.map(renderTicket).join('')}`;
+  bind();
+}
+
+function renderTicket(t) {
+  const msg = state.msg[t.id];
+  const editable = !t.voided && t.shareStatus !== 'claimed';
+  return `
+    <div class="tk" data-id="${esc(t.id)}">
+      <div class="tk-top">
+        <div class="tk-qr">${t.qr ? `<img src="${esc(t.qr)}" alt="QR del boleto">` : ''}</div>
+        <div class="tk-info">
+          <div class="tk-title">${esc(t.show)}</div>
+          <div class="tk-meta">${esc(metaLine(t))}</div>
+          ${seatLine(t)}
+        </div>
+        ${estadoTag(t)}
+      </div>
+      ${editable ? `
+        <div class="tk-form">
+          <input type="email" placeholder="correo de tu pana" value="${esc(t.shareStatus === 'sent' ? t.holderEmail : '')}" data-input="${esc(t.id)}">
+          <button class="btn btn-buy" data-send="${esc(t.id)}">${t.shareStatus === 'sent' ? 'Reenviar' : 'Enviar'}</button>
+          ${t.shareStatus === 'sent' ? `<button class="btn-ghost" data-revoke="${esc(t.id)}">Recuperar</button>` : ''}
+        </div>` : ''}
+      ${t.shareStatus === 'claimed' ? `<div class="tk-note">Ya está en la cuenta de ${esc(t.holderEmail)}. No se puede recuperar.</div>` : ''}
+      ${msg ? `<div class="tk-note ${msg.type}">${esc(msg.text)}</div>` : ''}
+    </div>`;
+}
+
+function bind() {
+  document.querySelectorAll('[data-send]').forEach(b => b.addEventListener('click', async () => {
+    const id = b.dataset.send;
+    const input = document.querySelector(`[data-input="${CSS.escape(id)}"]`);
+    const email = input.value.trim();
+    if (!email) { input.classList.add('invalid'); return; }
+    b.disabled = true; b.textContent = 'Enviando…';
+    const r = await fetch(`/api/boletos/${encodeURIComponent(id)}/enviar`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }),
+    });
+    const j = await r.json();
+    state.msg[id] = r.ok
+      ? { type: 'ok', text: `Boleto enviado a ${j.email}. El enlace sale en la consola del server y en /admin.` }
+      : { type: 'err', text: j.error ?? 'No se pudo enviar' };
+    await load();
+  }));
+
+  document.querySelectorAll('[data-revoke]').forEach(b => b.addEventListener('click', async () => {
+    const id = b.dataset.revoke;
+    b.disabled = true;
+    const r = await fetch(`/api/boletos/${encodeURIComponent(id)}/revocar`, { method: 'POST' });
+    const j = await r.json();
+    state.msg[id] = r.ok ? { type: 'ok', text: 'Boleto recuperado.' } : { type: 'err', text: j.error };
+    await load();
+  }));
+}
+
+load();
+</script>
+</body>
+</html>

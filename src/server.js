@@ -10,6 +10,8 @@ import { runVerification, runners } from './verifications.js';
 import { mockCartelera } from './mock.js';
 import { requestLogin, consumeToken, createSessionCookie, clearSessionCookie, requireSession, sessionEmail, rateLimited } from './auth.js';
 import { getProfile, getTicket, updateLocalData, updatePreferences } from './profile.js';
+import { ticketsOfOrder, orderBuyerEmail, sendTicket, revokeTicket, claimTicket, getPoints, ensureAssignment, emailTicketToSelf } from './sharing.js';
+import { listPassProducts, getPassProduct, upsertPassProduct, listPasses, listAnomalies, resolveAnomaly, refreshAllPasses, refreshPass, getPassForCustomer } from './pase.js';
 import { processOrder } from './webhooks.js';
 import { ttListAll } from './ttClient.js';
 
@@ -230,6 +232,110 @@ app.patch('/api/perfil/datos', requireSession, (req, res) => {
   res.json(updateLocalData(req.customerEmail, { name, phone }));
 });
 
+// ---------- Compartir boletos con el corillo ----------
+
+// Autorización: el dueño de la orden se verifica contra la SESIÓN, nunca contra
+// un parámetro del request.
+function requireOrderOwner(req, res, next) {
+  const ticket = db.prepare('SELECT order_id FROM issued_tickets WHERE id = ?').get(String(req.params.ticketId));
+  if (!ticket) return res.status(404).json({ error: 'Boleto no encontrado' });
+  const buyer = orderBuyerEmail(ticket.order_id);
+  if (!buyer || buyer.toLowerCase() !== req.customerEmail.toLowerCase()) {
+    return res.status(403).json({ error: 'Solo quien compró la orden puede repartir sus boletos' });
+  }
+  req.orderId = ticket.order_id;
+  next();
+}
+
+app.get('/mi-cuenta/orden/:orderId', requireSession, (_req, res) =>
+  res.sendFile(path.join(ROOT, 'public', 'orden.html')));
+
+app.get('/api/orden/:orderId', requireSession, (req, res) => {
+  const buyer = orderBuyerEmail(req.params.orderId);
+  if (!buyer) return res.status(404).json({ error: 'Orden no encontrada' });
+  if (buyer.toLowerCase() !== req.customerEmail.toLowerCase()) {
+    return res.status(403).json({ error: 'Esa orden no es tuya' });
+  }
+  res.json({ orderId: req.params.orderId, buyerEmail: buyer, tickets: ticketsOfOrder(req.params.orderId) });
+});
+
+app.post('/api/boletos/:ticketId/enviar', requireSession, requireOrderOwner, async (req, res) => {
+  // Rate limit OBLIGATORIO: este endpoint manda correo a una dirección arbitraria,
+  // así que es un vector de spam. 10 envíos por orden por hora.
+  if (rateLimited(`enviar:${req.orderId}`, 10, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Demasiados envíos para esta orden. Intenta de nuevo en un rato.' });
+  }
+  const proto = req.headers['x-forwarded-proto'] ?? req.protocol;
+  const result = await sendTicket({
+    ticketId: req.params.ticketId,
+    email: req.body?.email,
+    baseUrl: `${proto}://${req.get('host')}`,
+  });
+  res.status(result.ok ? 200 : 400).json(result);
+});
+
+// "Enviármelo a mí": copia del boleto al correo de la sesión. Autoriza contra la sesión
+// (dueño = quien lo reclamó, o el comprador). Rate limit por correo: también manda correo.
+app.post('/api/boletos/:ticketId/enviarme', requireSession, async (req, res) => {
+  if (rateLimited(`enviarme:${req.customerEmail}`, 10, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Demasiados envíos. Intenta de nuevo en un rato.' });
+  }
+  const result = await emailTicketToSelf({ ticketId: req.params.ticketId, email: req.customerEmail });
+  res.status(result.ok ? 200 : 400).json(result);
+});
+
+app.post('/api/boletos/:ticketId/revocar', requireSession, requireOrderOwner, (req, res) => {
+  const result = revokeTicket({ ticketId: req.params.ticketId, buyerEmail: req.customerEmail });
+  res.status(result.ok ? 200 : 400).json(result);
+});
+
+app.get('/reclamar/:token', (req, res) => {
+  const result = claimTicket(req.params.token);
+  if (!result.ok) {
+    return res.status(400).send(
+      `<meta charset="utf-8"><body style="background:#0B1211;color:#F4F1EA;font-family:sans-serif;padding:40px">` +
+      `${result.error}. <a href="/" style="color:#C6F24B">Ir a la cartelera</a></body>`
+    );
+  }
+  // Reclamar te deja adentro: misma cookie firmada del login por enlace mágico.
+  res.setHeader('Set-Cookie', createSessionCookie(result.email));
+  res.redirect('/mi-cuenta');
+});
+
+app.get('/api/perfil/puntos', requireSession, (req, res) => res.json(getPoints(req.customerEmail)));
+
+app.get('/api/ticket-email', (_req, res) => {
+  // Solo para /admin en el demo: último correo de boleto generado (no hay envío real)
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'last_ticket_email'").get();
+  res.json(row ? JSON.parse(row.value) : null);
+});
+
+// ---------- El Pase ----------
+app.get('/api/perfil/pase', requireSession, (req, res) => res.json(getPassForCustomer(req.customerEmail)));
+
+app.get('/api/pase/productos', (_req, res) => res.json(listPassProducts()));
+app.get('/api/pase/productos/:id', (req, res) => {
+  const p = getPassProduct(req.params.id);
+  if (!p) return res.status(404).json({ error: 'no existe' });
+  res.json(p);
+});
+app.put('/api/pase/productos', async (req, res) => {
+  try {
+    const r = await upsertPassProduct(req.body ?? {});
+    res.status(r.ok ? 200 : 400).json(r);
+  } catch (err) {
+    res.status(500).json({ ok: false, errors: [err.message] });
+  }
+});
+app.get('/api/pase/pases', (_req, res) => res.json(listPasses()));
+app.post('/api/pase/pases/:id/refrescar', async (req, res) => {
+  try { res.json(await refreshPass(Number(req.params.id))); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.post('/api/pase/refrescar', async (_req, res) => res.json(await refreshAllPasses()));
+app.get('/api/pase/anomalias', (req, res) => res.json(listAnomalies({ includeResolved: req.query.todas === '1' })));
+app.post('/api/pase/anomalias/:id/resolver', (req, res) => { resolveAnomaly(req.params.id); res.json({ ok: true }); });
+
 app.get('/api/session', (req, res) => {
   // Sesión ligera para la cartelera: pre-llenar el checkout de TT si hay login
   const email = sessionEmail(req);
@@ -263,6 +369,20 @@ async function backfillOrders() {
     const orders = await ttListAll('/orders');
     for (const o of orders.items) await processOrder(o, 'api');
     console.log(`[backfill] ${orders.items.length} órdenes ingeridas (clientes + boletos)`);
+
+    // Red de seguridad: boletos que ya estaban en la DB sin fila de reparto
+    // (por ejemplo, ingeridos antes de que existiera esta tabla).
+    const huerfanos = db.prepare(`
+      SELECT it.id, it.occurrence_id, COALESCE(it.email, o.customer_email) AS email
+      FROM issued_tickets it
+      LEFT JOIN orders o ON o.id = it.order_id
+      LEFT JOIN ticket_assignments a ON a.issued_ticket_id = it.id
+      WHERE a.id IS NULL
+    `).all();
+    for (const t of huerfanos) {
+      ensureAssignment({ ticketId: t.id, occurrenceId: t.occurrence_id, buyerEmail: t.email });
+    }
+    if (huerfanos.length) console.log(`[backfill] ${huerfanos.length} boletos con reparto inicializado`);
   } catch (err) {
     console.error('[backfill] error:', err.message);
   }
@@ -278,8 +398,9 @@ app.listen(PORT, () => {
   if (!hasApiKey()) {
     console.log('\n⚠ Sin TICKET_TAILOR_API_KEY en .env — la cartelera usa datos mock y el sync está apagado.');
   } else {
-    syncAll({ dumpRaw: true }).then(() => backfillOrders());
-    setInterval(() => syncAll(), 60_000);
+    syncAll({ dumpRaw: true }).then(() => backfillOrders()).then(() => refreshAllPasses());
+    // El Pase: en cada tick, localizar membresías pendientes, releer contadores y vencer.
+    setInterval(() => syncAll().then(() => refreshAllPasses()), 60_000);
     console.log('\nSync job activo: cada 60s contra el API (respetando rate limit).');
     console.log('Perfil demo: http://localhost:' + PORT + '/entrar');
   }

@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import { db, now, setVerification, recordFieldDiscovery } from './db.js';
 import { ttRequest, ttListAll, dump, pick, hasApiKey } from './ttClient.js';
 import { processOrder } from './webhooks.js';
+import { evaluatePointsForTicket, claimTicket, sendTicket } from './sharing.js';
 
 /**
  * Runners de verificaciones ejecutables desde /admin.
@@ -433,7 +435,452 @@ export const runners = {
         : 'Revisar respuesta cruda en el dump y ajustar el body del POST.',
     });
   },
+  // ---------- Compartir boletos con el corillo ----------
+  //
+  // V13/V14/V15 prueban la REGLA DE PUNTOS, que es lógica nuestra, no del API de TT.
+  // Cada una monta su escenario en una transacción y la revierte al terminar, así que
+  // no ensucian la base ni tocan la cuenta del cliente. El dump guarda el antes/después.
+
+  async V13() {
+    // Boleto reclamado + check-in = exactamente 1 punto. Correrlo dos veces no da 2.
+    const r = withScenario(({ email, occ, ticketId }) => {
+      claimByFixture(ticketId, email);
+      setCheckedIn(ticketId, true);
+
+      const first = evaluatePointsForTicket(ticketId);
+      const afterFirst = pointsOf(email, occ);
+      const second = evaluatePointsForTicket(ticketId);   // idempotencia
+      const afterSecond = pointsOf(email, occ);
+
+      return {
+        primera_evaluacion_otorgo: first,
+        puntos_tras_primera: afterFirst,
+        segunda_evaluacion_otorgo: second,
+        puntos_tras_segunda: afterSecond,
+        ok: first === true && afterFirst === 1 && second === false && afterSecond === 1,
+      };
+    });
+
+    const dumpPath = dump('v13-punto-reclamado-mas-checkin', r);
+    setVerification('V13', {
+      status: r.ok ? 'PASA' : 'FALLA',
+      fields_found: [
+        `reclamado + escaneado → otorga: ${r.primera_evaluacion_otorgo} · total = ${r.puntos_tras_primera} punto`,
+        `segunda evaluación → otorga: ${r.segunda_evaluacion_otorgo} · total sigue = ${r.puntos_tras_segunda}`,
+        'idempotencia por UNIQUE(customer_id, occurrence_id) + INSERT OR IGNORE',
+      ].join(' · '),
+      dump_path: dumpPath,
+      notes: r.ok
+        ? 'El punto se otorga al escanear (no al reclamar) y reevaluar no duplica.'
+        : 'La regla no se cumplió: revisar el dump con el antes/después.',
+    });
+  },
+
+  async V14() {
+    // Enviado pero NUNCA reclamado: aunque se escanee, no otorga punto.
+    const r = withScenario(({ email, occ, ticketId }) => {
+      db.prepare(`UPDATE ticket_assignments SET status='sent', holder_email=?, holder_customer_id=NULL, sent_at=? WHERE issued_ticket_id=?`)
+        .run(email, now(), ticketId);
+      setCheckedIn(ticketId, true);
+
+      const otorgo = evaluatePointsForTicket(ticketId);
+      const total = pointsOf(email, occ);
+
+      // Y al reclamar DESPUÉS del escaneo, sí debe otorgarse (reclamo tardío)
+      claimByFixture(ticketId, email);
+      const trasReclamo = evaluatePointsForTicket(ticketId);
+      const totalTrasReclamo = pointsOf(email, occ);
+
+      return {
+        enviado_sin_reclamar_otorgo: otorgo,
+        puntos_sin_reclamar: total,
+        reclamo_tardio_otorgo: trasReclamo,
+        puntos_tras_reclamo_tardio: totalTrasReclamo,
+        ok: otorgo === false && total === 0 && trasReclamo === true && totalTrasReclamo === 1,
+      };
+    });
+
+    const dumpPath = dump('v14-enviado-sin-reclamar-no-otorga', r);
+    setVerification('V14', {
+      status: r.ok ? 'PASA' : 'FALLA',
+      fields_found: [
+        `enviado + escaneado pero SIN reclamar → otorga: ${r.enviado_sin_reclamar_otorgo} · total = ${r.puntos_sin_reclamar}`,
+        `reclamo TARDÍO (después del escaneo) → otorga: ${r.reclamo_tardio_otorgo} · total = ${r.puntos_tras_reclamo_tardio}`,
+      ].join(' · '),
+      dump_path: dumpPath,
+      notes: r.ok
+        ? 'Quien no reclama no acumula. Y el reclamo posterior al escaneo sí otorga: por eso se evalúa en los dos eventos.'
+        : 'La regla no se cumplió: revisar el dump.',
+    });
+  },
+
+  async V15() {
+    // Dos boletos de la MISMA función en la misma persona = 1 punto (no 2).
+    const r = withScenario(({ email, occ, ticketId, ticketId2 }) => {
+      for (const id of [ticketId, ticketId2]) {
+        claimByFixture(id, email);
+        setCheckedIn(id, true);
+      }
+      const a = evaluatePointsForTicket(ticketId);
+      const b = evaluatePointsForTicket(ticketId2);
+      const total = pointsOf(email, occ);
+      const filas = db.prepare(
+        'SELECT COUNT(*) c FROM loyalty_points WHERE occurrence_id = ? AND customer_id = (SELECT id FROM customers WHERE email = ?)'
+      ).get(occ, email).c;
+      return {
+        primer_boleto_otorgo: a,
+        segundo_boleto_otorgo: b,
+        puntos_totales: total,
+        filas_en_el_ledger: filas,
+        ok: a === true && b === false && total === 1 && filas === 1,
+      };
+    }, { twoTickets: true });
+
+    const dumpPath = dump('v15-dos-boletos-misma-funcion-un-punto', r);
+    setVerification('V15', {
+      status: r.ok ? 'PASA' : 'FALLA',
+      fields_found: [
+        `primer boleto otorga: ${r.primer_boleto_otorgo} · segundo boleto otorga: ${r.segundo_boleto_otorgo}`,
+        `total = ${r.puntos_totales} punto · filas en loyalty_points = ${r.filas_en_el_ledger}`,
+        'el ledger es UNIQUE(customer_id, occurrence_id): un punto por persona por FUNCIÓN, no por boleto',
+      ].join(' · '),
+      dump_path: dumpPath,
+      notes: r.ok
+        ? 'Quedarse con 2 boletos de la misma función da 1 punto.'
+        : 'La regla no se cumplió: revisar el dump.',
+    });
+  },
+  /**
+   * V18 — ¿Un ticket type "Members only" convive con un seating chart?
+   * Decide si el abonado puede tener BUTACA REAL sin usar códigos de descuento.
+   * Se resolvió creando el ticket type a mano en el dashboard (el API no los crea:
+   * POST /ticket_types → 404) y leyendo cómo lo expone el API.
+   */
+  async V18() {
+    if (!requireKey('V18')) return;
+
+    const events = await ttListAll('/events');
+    const allTT = events.items.flatMap(e => (e.ticket_types ?? []).map(tt => ({ ev: e.id, serie: e.event_series_id, tt })));
+    allTT.forEach(x => recordFieldDiscovery('ticket_types', x.tt));
+
+    // El combo que decide: status members_only Y type Seated en el mismo ticket type.
+    const combo = allTT.filter(x =>
+      /member/i.test(String(pick(x.tt, ['status']).value ?? '')) &&
+      /seat/i.test(String(pick(x.tt, ['type']).value ?? ''))
+    );
+    const soloMembers = allTT.filter(x => /member/i.test(String(pick(x.tt, ['status']).value ?? '')));
+    const statuses = [...new Set(allTT.map(x => String(pick(x.tt, ['status']).value)))];
+    const tipos = [...new Set(allTT.map(x => String(pick(x.tt, ['type']).value)))];
+
+    // ¿En cuántas ocurrencias vive el ticket type del pase? (los TT son compartidos
+    // por la serie, así que uno solo cubre toda la temporada)
+    let cobertura = null;
+    if (combo.length) {
+      const id = combo[0].tt.id;
+      const ocurrencias = allTT.filter(x => x.tt.id === id).map(x => x.ev);
+      cobertura = { ticket_type: id, ocurrencias: ocurrencias.length, serie: combo[0].serie };
+    }
+
+    const dumpPath = dump('v18-members-only-con-seating-chart', {
+      veredicto: combo.length ? 'A FAVOR · members_only y Seated conviven' : 'sin evidencia todavía',
+      statuses_observados: statuses,
+      types_observados: tipos,
+      ticket_types_members_only: soloMembers.map(x => x.tt),
+      combo_members_only_y_seated: combo.map(x => x.tt),
+      cobertura_en_la_serie: cobertura,
+      nota: 'Los ticket types NO se crean por API (POST /ticket_types → 404): este se creó en el dashboard y el API solo lo refleja.',
+    });
+
+    setVerification('V18', {
+      status: combo.length ? 'PASA' : 'PARCIAL',
+      fields_found: combo.length
+        ? [
+            `ticket type "${combo[0].tt.name}" (${combo[0].tt.id}): "status" = "${combo[0].tt.status}" Y "type" = "${combo[0].tt.type}" a la vez`,
+            `precio ${combo[0].tt.price} · max_per_order ${combo[0].tt.max_per_order} · aforo ${combo[0].tt.quantity_total}`,
+            cobertura ? `cubre ${cobertura.ocurrencias} ocurrencias de ${cobertura.serie} (los ticket types son compartidos por la serie)` : null,
+            `valores de "status" vistos en la cuenta: [${statuses.join(', ')}] · de "type": [${tipos.join(', ')}]`,
+          ].filter(Boolean).join(' · ')
+        : `Sin ticket type que combine members_only + Seated. status vistos: [${statuses.join(', ')}] · type: [${tipos.join(', ')}]`,
+      dump_path: dumpPath,
+      notes: combo.length
+        ? 'A FAVOR: el "Abono Butaca" es viable. Un ticket type Members only CON butacas del seating chart permite que el abonado escoja asiento real sin usar códigos de descuento — lo que esquiva por completo el fallo de V24 (el monto fijo se aplicaba por boleto). Además "max_per_order" se fija SOLO en este ticket type, así que no afecta las compras regulares. El ticket type se crea a mano en el dashboard: el API no los crea (404), solo los refleja.'
+        : 'Crea en el dashboard un ticket type con status "Members only" asignado a categorías del seating chart y vuelve a correr.',
+    });
+  },
+
+  /**
+   * V22 — ¿Una orden de $0 (la redención del pase) dispara el webhook de orden igual
+   * que una pagada, y con qué valores en los campos de total?
+   */
+  async V22() {
+    const products = db.prepare('SELECT ticket_type_id FROM pass_products').all().map(p => p.ticket_type_id);
+    const rows = db.prepare(`SELECT * FROM webhook_log WHERE event_type LIKE 'ORDER.%' COLLATE NOCASE ORDER BY received_at DESC LIMIT 200`).all();
+    let redencion = null;
+    let gratis = null;
+    for (const wh of rows) {
+      let payload; try { payload = JSON.parse(wh.payload); } catch { continue; }
+      const obj = pick(payload, ['payload', 'data', 'object']).value ?? payload;
+      const total = Number(pick(obj, ['total']).value);
+      if (!Number.isFinite(total) || total !== 0) continue;
+      const tickets = pick(obj, ['issued_tickets']).value;
+      const usaPase = Array.isArray(tickets) && tickets.some(t => products.includes(String(pick(t, ['ticket_type_id']).value ?? '')));
+      const info = {
+        webhook: wh.event_type, received_at: wh.received_at, order_id: obj.id, dump: wh.dump_path,
+        total: obj.total, total_paid: obj.total_paid, subtotal: obj.subtotal,
+        payment_method: pick(obj, ['payment_method.id', 'payment_method']).value ?? null,
+        boletos: Array.isArray(tickets) ? tickets.length : 0,
+      };
+      if (usaPase && !redencion) redencion = info;
+      if (!gratis) gratis = info;
+      if (redencion) break;
+    }
+    const dumpPath = dump('v22-orden-cero-dispara-webhook', { redencion_del_pase: redencion, orden_gratis_cualquiera: gratis, ticket_types_del_pase: products });
+    const ev = redencion ?? gratis;
+    setVerification('V22', {
+      status: redencion ? 'PASA' : (gratis ? 'PARCIAL' : 'PENDIENTE'),
+      fields_found: ev
+        ? `${ev.webhook} llegó para la orden ${ev.order_id} con "total" = ${JSON.stringify(ev.total)} · "total_paid" = ${JSON.stringify(ev.total_paid)} · "subtotal" = ${JSON.stringify(ev.subtotal)} · ${ev.boletos} boleto(s)${redencion ? ' · uno de ellos es el ticket type del pase' : ''}`
+        : 'Ningún webhook de orden a $0 todavía',
+      dump_path: dumpPath,
+      notes: redencion
+        ? 'Las órdenes a $0 disparan ORDER.CREATED igual que las pagadas: la redención del pase se ingiere por el mismo camino. Los créditos de TT no se pueden leer por API — confirmar en el dashboard (Billing) si una orden gratis consume crédito.'
+        : gratis
+          ? 'Las órdenes gratis de agosto sí dispararon webhook. Falta una REDENCIÓN real (compra del boleto "members only" a $0) para cerrar V22. Ver TESTPLAN.'
+          : 'Reserva una función con un pase activo y vuelve a correr.',
+    });
+  },
+
+  /**
+   * V25 — Al agotar max_redemptions de la membresía, ¿el boleto deja de aparecer?
+   * Lo observable por API es el estado de la membresía al llegar al límite
+   * (redemptions, is_valid). Que el checkout ya no muestre el boleto se confirma a
+   * mano (no hay API de canasta).
+   */
+  async V25() {
+    if (!requireKey('V25')) return;
+    const passes = db.prepare(`SELECT * FROM season_passes WHERE issued_membership_id IS NOT NULL ORDER BY redemptions DESC`).all();
+    const top = passes[0];
+    if (!top) {
+      setVerification('V25', { status: 'PENDIENTE', notes: 'Ningún pase con membresía localizada todavía. Compra El Pase (TESTPLAN) y vuelve a correr.' });
+      return;
+    }
+    const res = await ttRequest(`/issued_memberships/${encodeURIComponent(top.issued_membership_id)}`);
+    const m = res.json?.data ?? res.json;
+    if (m && typeof m === 'object') recordFieldDiscovery('issued_memberships', m);
+    const red = Number(pick(m ?? {}, ['redemptions']).value);
+    const max = pick(m ?? {}, ['max_redemptions']).value ?? top.max_redemptions;
+    const isValid = pick(m ?? {}, ['is_valid']).value;
+    const lista = pick(m ?? {}, ['redemption_collection']).value;
+    const agotado = Number.isFinite(red) && max != null && red >= Number(max);
+    const sobre = db.prepare(`SELECT COUNT(*) c FROM pass_anomalies WHERE kind = 'over_redemption' AND resolved_at IS NULL`).get().c;
+    const dumpPath = dump('v25-agotar-membresia', { pass_id: top.id, membership: m, http: res.status, agotado, anomalias_over_redemption: sobre });
+    setVerification('V25', {
+      status: agotado ? (sobre ? 'FALLA' : 'PASA') : 'PARCIAL',
+      fields_found: [
+        `membresía ${top.issued_membership_id}: "redemptions" = ${red} · "max_redemptions" = ${JSON.stringify(max)} · "is_valid" = ${JSON.stringify(isValid)} (STRING, normalizar)`,
+        Array.isArray(lista) ? `"redemption_collection" trae ${lista.length} entradas${lista[0] ? ` · campos: {${Object.keys(lista[0]).join(', ')}}` : ''}` : '"redemption_collection" no es lista',
+        'el límite lo cuenta TT por MEMBRESÍA (no por orden ni por código): cada compra del boleto members-only gasta 1',
+        sobre ? `⚠ ${sobre} anomalía(s) over_redemption abiertas: TT dejó pasar más de max_redemptions` : 'sin over_redemption: TT no dejó pasar más de max_redemptions',
+      ].join(' · '),
+      dump_path: dumpPath,
+      notes: agotado
+        ? (sobre ? 'EN CONTRA: hubo más redenciones que el límite. Revisar el dump y /admin.' : 'El contador llegó al límite y no lo superó. Confirmar a mano que el boleto "Planta X - El Pase" ya NO aparece en el checkout para ese abonado (no hay API de canasta).')
+        : `Aún no se agota: ${red}/${max}. Reserva funciones hasta llegar al límite y vuelve a correr.`,
+    });
+  },
+
+  // ---------- El Pase · verificaciones BLOQUEANTES ----------
+  //
+  // Se corren ANTES de construir nada. Si cualquiera sale en contra, el modelo de
+  // "un código de monto fijo por show" no se sostiene y hay que replantear.
+
+  /**
+   * V23 — BLOQUEANTE. ¿El API permite asignar el código a ticket types específicos al
+   * crearlo, o eso solo existe en la interfaz? Si solo existe en la interfaz, el modelo
+   * de un código por show no se puede automatizar.
+   */
+  async V23() {
+    if (!requireKey('V23')) return;
+
+    const tt = db.prepare(`
+      SELECT tt.id, tt.name, o.show_id FROM ticket_types tt
+      JOIN occurrences o ON o.id = tt.occurrence_id LIMIT 1
+    `).get();
+    if (!tt) {
+      setVerification('V23', { status: 'PENDIENTE', notes: 'No hay ticket types en caché. Corre el sync primero.' });
+      return;
+    }
+    const otros = db.prepare(`
+      SELECT DISTINCT tt.id FROM ticket_types tt
+      JOIN occurrences o ON o.id = tt.occurrence_id
+      WHERE o.show_id != ? LIMIT 5
+    `).all(tt.show_id).map(r => r.id);
+
+    const code = `PASE-V23${Math.floor(Math.random() * 9000 + 1000)}`;
+    const form = { name: 'V23 · alcance por ticket type', code, type: 'fixed_amount', price: '2400', max_redemptions: '1' };
+    form[`ticket_type_id[${tt.id}]`] = '1';
+
+    const created = await ttRequest('/discounts', { method: 'POST', form });
+    const body = created.json?.data ?? created.json;
+    if (body && typeof body === 'object') recordFieldDiscovery('discounts', body);
+
+    // Releer: el eco del POST podría mentir, así que se confirma con un GET.
+    let readBack = null;
+    if (body?.id) {
+      const r = await ttRequest(`/discounts/${encodeURIComponent(body.id)}`);
+      readBack = r.json?.data ?? r.json;
+    }
+    const bound = readBack ? (pick(readBack, ['ticket_types']).value ?? []) : [];
+    const fuga = bound.filter(id => otros.includes(id));
+
+    const dumpPath = dump('v23-discount-alcance-por-ticket-type', {
+      request: form, status: created.status, response: created.json,
+      releido: readBack, ticket_types_de_otros_shows: otros, fuga,
+    });
+    if (body?.id) await ttRequest(`/discounts/${encodeURIComponent(body.id)}`, { method: 'DELETE' });
+
+    const ok = created.status === 201 && bound.length === 1 && bound[0] === tt.id && fuga.length === 0;
+    setVerification('V23', {
+      status: ok ? 'PASA' : 'FALLA',
+      fields_found: [
+        `POST /v1/discounts type=fixed_amount → HTTP ${created.status}`,
+        'monto fijo se manda en "price" (centavos) y vuelve como "face_value_amount"',
+        'alcance: "ticket_type_id[tt_xxx]=1" (arreglo estilo PHP, igual que /holds)',
+        'OJO: "ticket_type_ids", csv y "ticket_types[]" devuelven 201 con ticket_types:[] — falso positivo que dejaría el código aplicable a TODO el catálogo. Verificar SIEMPRE el eco.',
+        `alcance releído: ${JSON.stringify(bound)} · fuga a otros shows: ${fuga.length}`,
+      ].join(' · '),
+      dump_path: dumpPath,
+      notes: ok
+        ? 'A FAVOR: el modelo de un código por show SÍ se puede automatizar por API. El alcance persiste al releer y no se filtra a otros shows.'
+        : 'EN CONTRA: revisar el dump. Si el alcance no se puede fijar por API, el modelo de un código por show hay que replantearlo.',
+    });
+  },
+
+  /**
+   * V24 — BLOQUEANTE. Un código de MONTO FIJO con dos butacas del mismo ticket type en
+   * UNA canasta: ¿descuenta el monto una vez por ORDEN o una vez por BOLETO?
+   * Si es por boleto, todo el modelo de El Pase se cae.
+   *
+   * NO es resoluble por API: no existe POST /orders y la canasta vive en el checkout.
+   * Lo que sí se puede hacer por API es dejar el código listo y medir el resultado de
+   * una compra real. El runner evalúa la evidencia que haya.
+   */
+  async V24() {
+    if (!requireKey('V24')) return;
+
+    // RESULTADO REAL (2026-09-10, cuenta con eventos pagados): EN CONTRA.
+    // Canasta de 2 × $10 = $20 con código de monto fijo de $10 y max_redemptions=1
+    // → Total $0.00 y times_redeemed subió a 1. El descuento se aplicó POR BOLETO.
+    const conPrecio = db.prepare('SELECT id, name, price_cents FROM ticket_types WHERE price_cents > 0').all();
+
+    // Evidencia real: órdenes ingeridas que usaron un código de monto fijo con 2+ boletos
+    const ordenes = db.prepare(`
+      SELECT id, raw FROM orders WHERE raw LIKE '%discount%' ORDER BY created_at DESC LIMIT 20
+    `).all();
+    let evidencia = null;
+    for (const o of ordenes) {
+      const order = JSON.parse(o.raw);
+      const tickets = pick(order, ['issued_tickets']).value;
+      const n = Array.isArray(tickets) ? tickets.length : 0;
+      if (n < 2) continue;
+      // El nombre del campo del descuento no se asume: se prueban candidatos.
+      const desc = pick(order, ['discounts', 'discount', 'discount_code', 'vouchers']);
+      const total = pick(order, ['total', 'total_paid']).value;
+      const subtotal = pick(order, ['subtotal']).value;
+      if (desc.field) {
+        evidencia = { orderId: o.id, boletos: n, campo_descuento: desc.field, valor: desc.value, subtotal, total };
+        break;
+      }
+    }
+
+    const dumpPath = dump('v24-monto-fijo-por-orden-o-por-boleto', {
+      veredicto: 'EN CONTRA · el descuento de monto fijo se aplica POR BOLETO, no por orden',
+      prueba_ejecutada: {
+        fecha: '2026-09-10',
+        ticket_type: 'tt_6684870', precio_unitario_cents: 1000,
+        occurrence: 'ev_9073315 (Noches de Impro, 26 oct 2026)',
+        discount: { id: 'di_599017', code: 'V24PRUEBA', type: 'fixed_amount',
+                    face_value_amount: 1000, max_redemptions: 1 },
+        canasta: '2 × Planta Baja = $20.00',
+        total_observado: '$0.00',
+        esperado_si_fuera_por_orden: '$10.00',
+        times_redeemed_despues: 1,
+      },
+      consecuencia: [
+        'Un código de monto fijo de $X descuenta $X POR CADA BOLETO del ticket type en la canasta.',
+        'max_redemptions cuenta ÓRDENES (times_redeemed pasó a 1 con 2 boletos descontados), así que',
+        'UN SOLO uso del código puede regalar N boletos: el límite nativo no acota el daño.',
+        'El modelo de "un código de monto fijo por show" es EXPLOTABLE tal como estaba diseñado.',
+      ],
+      ordenes_candidatas: ordenes.length,
+      evidencia,
+    });
+
+    setVerification('V24', {
+      status: 'FALLA',
+      fields_found: [
+        'PRUEBA REAL: canasta de 2 × $10 ($20) + código fixed_amount de $10 con max_redemptions=1 → TOTAL $0.00',
+        'El descuento se aplicó POR BOLETO (2 × $10), no una vez por orden',
+        '"times_redeemed" pasó a 1: el límite cuenta ÓRDENES, así que un solo uso regaló DOS boletos',
+        'Confirma también V17 (el límite nativo cuenta órdenes) y agrava su consecuencia',
+        'El campo de monto fijo es "price" (centavos) y vuelve como "face_value_amount"',
+      ].join(' · '),
+      dump_path: dumpPath,
+      notes: 'BLOQUEANTE EN CONTRA. Un código de monto fijo de $X descuenta $X por CADA boleto del ticket type en la canasta, y max_redemptions solo cuenta órdenes: con un uso, un abonado mete N butacas y se las lleva todas gratis. El modelo de "un código de monto fijo por show" NO se sostiene: hay que replantear antes de construir El Pase. Alternativas a evaluar: (a) max_per_order=1 en el ticket type del abonado, si TT lo permite por ticket type; (b) un ticket type "Members only" exclusivo del pase con su propio aforo; (c) emitir un código distinto por función en vez de uno por show.',
+    });
+  },
 };
+
+// ---------- utilidades de escenario para V13–V15 ----------
+// Montan datos de prueba y los REVIERTEN siempre (rollback), para no ensuciar la base
+// real del laboratorio ni contaminar los puntos de un cliente de verdad.
+
+function withScenario(fn, { twoTickets = false } = {}) {
+  const email = `v-test-${crypto.randomUUID().slice(0, 8)}@example.test`;
+  const occ = db.prepare('SELECT id FROM occurrences ORDER BY starts_at DESC LIMIT 1').get()?.id ?? 'ev_fixture';
+  const ticketId = `it_fixture_${crypto.randomUUID().slice(0, 8)}`;
+  const ticketId2 = `it_fixture_${crypto.randomUUID().slice(0, 8)}`;
+
+  let result;
+  const tx = db.transaction(() => {
+    db.prepare('INSERT INTO customers (email, created_at, updated_at) VALUES (?, ?, ?)').run(email, now(), now());
+    const ids = twoTickets ? [ticketId, ticketId2] : [ticketId];
+    for (const id of ids) {
+      db.prepare(`INSERT INTO issued_tickets (id, occurrence_id, status, checked_in, updated_at) VALUES (?, ?, 'valid', 0, ?)`)
+        .run(id, occ, now());
+      db.prepare(`INSERT INTO ticket_assignments (issued_ticket_id, occurrence_id, holder_email, status, created_at, updated_at)
+                  VALUES (?, ?, ?, 'owner', ?, ?)`).run(id, occ, email, now(), now());
+    }
+    result = fn({ email, occ, ticketId, ticketId2 });
+    // Siempre revertir: el escenario es evidencia, no estado.
+    throw new RollbackScenario();
+  });
+  try { tx(); } catch (err) { if (!(err instanceof RollbackScenario)) throw err; }
+  return { ...result, escenario: { email, occurrence_id: occ, boletos: twoTickets ? [ticketId, ticketId2] : [ticketId] },
+           nota: 'Escenario revertido con rollback: no queda nada en la base.' };
+}
+
+class RollbackScenario extends Error {}
+
+function claimByFixture(ticketId, email) {
+  db.prepare(`
+    UPDATE ticket_assignments SET status='claimed', holder_email=?,
+      holder_customer_id=(SELECT id FROM customers WHERE email=?), claimed_at=?, claim_token_hash=NULL
+    WHERE issued_ticket_id=?
+  `).run(email, email, now(), ticketId);
+}
+
+function setCheckedIn(ticketId, yes) {
+  db.prepare('UPDATE issued_tickets SET checked_in=?, checked_in_at=? WHERE id=?')
+    .run(yes ? 1 : 0, yes ? now() : null, ticketId);
+}
+
+function pointsOf(email, occ) {
+  return db.prepare(`
+    SELECT COALESCE(SUM(points), 0) p FROM loyalty_points
+    WHERE occurrence_id = ? AND customer_id = (SELECT id FROM customers WHERE email = ?)
+  `).get(occ, email).p;
+}
 
 export async function runVerification(id) {
   const runner = runners[id];

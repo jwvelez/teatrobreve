@@ -152,6 +152,149 @@ Con la función del Paso 1.4 (venta futura), confirma en la cartelera local que 
 
 Corre **V12** en `/admin`: intenta `POST /v1/holds` (asientos de prensa/VIP), vuelca la respuesta cruda —éxito o error— y relee la disponibilidad para verificar el descuento. Si el shape del body no es el esperado, el dump del error dice qué pide el API; ajusta y repite.
 
+
+---
+
+# Compartir boletos con el corillo (pasos 12–14)
+
+El punto se gana al **escanear** en la puerta, no al reclamar, y solo lo gana quien tenga
+el boleto **reclamado** a su cuenta. Estos pasos prueban eso de punta a punta.
+
+## Paso 12 · 🧑 Compra de varios boletos en una orden
+
+1. Compra **4 boletos** de una misma función con tu correo de prueba.
+2. Al llegar el webhook `ORDER.CREATED`, el lab crea una fila de `ticket_assignments` por
+   boleto con el comprador como `owner`.
+3. Entra a `/mi-cuenta` → cada boleto muestra la etiqueta **Mío** y un enlace **Repartir →**.
+
+## Paso 13 · 🤖 Repartir y reclamar
+
+1. En `/mi-cuenta/orden/<or_xxx>` escribe un correo distinto en 3 de los 4 boletos y dale
+   **Enviar**. El cuarto se queda contigo.
+2. **No hay envío real de correo.** El enlace de reclamo sale en la consola del server y en
+   `GET /api/ticket-email` (el HTML completo del correo también).
+3. Abre el enlace en una ventana privada: crea la cuenta de esa persona, la deja con sesión
+   iniciada y el boleto aparece en **su** `/mi-cuenta` marcado *Reclamado por ti*.
+4. En tu cuenta ese boleto ahora dice **Reclamado por x@y.com** y ya no se puede recuperar.
+
+Cosas que vale la pena probar porque están cubiertas por código:
+- **Recuperar** un boleto enviado pero no reclamado → vuelve a *Mío*.
+- Intentar **revocar uno ya reclamado** → lo rechaza.
+- Reusar un enlace de reclamo → *inválido o ya usado* (un solo uso).
+- Mandar 11 veces desde la misma orden en una hora → el 11.º da **429** (rate limit).
+
+## Paso 14 · 🧑 Escanear y ver el punto
+
+1. Escanea con la app oficial de Check-in **el boleto de una persona que SÍ reclamó** y
+   **el de una que NO reclamó**.
+2. Corre el sync (o espera el ciclo de 60 s) para ingerir los check-ins.
+3. En `/mi-cuenta` → **Mis puntos**:
+   - quien reclamó y fue escaneado: **1 punto**
+   - quien no reclamó: **0 puntos**, aunque su boleto se haya escaneado
+4. Si esa persona reclama **después** del escaneo, el punto se le otorga igual (reclamo
+   tardío). Esa es la razón de evaluar en los dos eventos.
+
+Las tres reglas están cubiertas por runners automáticos que montan su escenario y lo
+revierten (no ensucian la base): **V13**, **V14** y **V15** en `/admin`.
+
+
+---
+
+# El Pase · pase de temporada (pasos 18–23)
+
+## Lo que decidió el modelo (ya ejecutado el 2026-09-10)
+
+| Verificación | Resultado | Consecuencia |
+|---|---|---|
+| **V24** monto fijo, ¿por orden o por boleto? | **EN CONTRA**: 2 × $10 con código de $10 → total **$0.00**, `times_redeemed` = 1 | Los códigos de descuento **no sirven** para el pase (un uso regala N boletos) |
+| **V23** ¿alcance del discount por API? | A favor (`ticket_type_id[tt_xxx]=1`) | Irrelevante tras V24; queda como hallazgo |
+| **V18** ¿"Members only" + seating chart? | **A FAVOR**: `tt_6795478` es `members_only` y `Seated` | **El Pase se construye sobre membresías nativas de TT** |
+
+> Si alguna vez hay que repetir V24: crea un discount `fixed_amount` de $10 en un ticket type de
+> $10, mete **2** en una canasta y mira el total antes de pagar. $10 = por orden; $0 = por boleto.
+
+## Paso 18 · 🧑 Montar las tres piezas en el dashboard (una planta)
+
+Ya están creadas para Planta Baja. Para otra planta, repetir las tres:
+
+1. **Settings → Memberships → Create membership type**: nombre (`Abonados 2026 · Alta`),
+   *Valid from: the date of issue*, *Expires: a scheduled **date*** (el cierre real de la
+   temporada — OJO: el actual vence el **4 nov 2026**), *Number of redemptions: set limit to* **8**.
+2. **Products → Add product**: nombre, precio (lo que paga el abonado, TT suma IVU y fees),
+   *Fulfilment: **Issue a membership*** → el membership type del paso 1, *Sell in Store* ✓.
+   Anota el `pr_xxxxx`.
+3. En la **serie** de la temporada, **Add ticket type**: `Planta Alta - El Pase`, precio **0**,
+   status **Members only** → el membership type del paso 1, asígnale las categorías de esa planta
+   del seating chart, **Max per order: 1**, aforo = butacas reservadas para abonados. Al ser
+   serie recurrente, aparece solo en **todas** las funciones.
+4. Copia el **enlace de compra del producto** (Products → el producto → ver en tienda). El API no
+   lo expone y TT bloquea el scraping: hay que pegarlo a mano en el paso 20.
+
+## Paso 19 · 🧑 Webhooks de membresía
+
+En Settings → API → Webhooks añade (misma URL del túnel):
+
+| Event | Para qué |
+|---|---|
+| **ISSUED_MEMBERSHIP.CREATED** | TT avisa cuando emite la membresía al comprar el pase → el pase pasa de `pending` a `active` al instante |
+| **ISSUED_MEMBERSHIP.UPDATED** | cambios de estado (void, vencimiento) |
+
+Sin ellos también funciona: el sync localiza la membresía en el siguiente ciclo (60 s).
+
+## Paso 20 · 🤖 Registrar el pase en el lab
+
+En `/admin` → **El Pase · productos**, llena el formulario (o por API):
+
+```bash
+curl -X PUT localhost:3000/api/pase/productos -H 'Content-Type: application/json' -d '{
+  "id": "pase-2026-baja", "name": "El Pase · Planta Baja", "planta": "baja",
+  "tt_product_id": "pr_80783", "membership_type_id": "mt_9760", "ticket_type_id": "tt_6795478",
+  "store_url": "<enlace de compra del producto>"
+}'
+```
+
+Valida contra TT antes de guardar y **falla ruidoso**: producto inexistente, fulfilment que no
+emite ese membership type, ticket type que no es members-only o no cuesta $0. Avisa (sin
+bloquear) si `max_per_order` ≠ 1 o falta `store_url`. El dump de la validación queda enlazado.
+
+## Paso 21 · 🧑 Comprar El Pase desde el perfil
+
+1. Entra a `/mi-cuenta` con un correo **sin** pase → menú **El Pase** → card de compra →
+   **Comprar El Pase** (modal con el checkout de TT; el pago salta a pestaña hasta el custom domain).
+2. Completa la compra con **ese mismo correo**.
+3. Llega `ORDER.CREATED` con `line_items[].item_id = pr_80783` → `/admin` → pases emitidos muestra
+   el pase en `pending`, y en segundos (webhook de membresía) o ≤60 s (sync) pasa a **`active`**
+   con `im_xxxxx`, su `code`, y **8 / 8**.
+4. En `/mi-cuenta` → El Pase: saldo, vigencia, funciones con botón **Reservar**.
+
+## Paso 22 · 🧑 Redimir una función — cierra V22
+
+1. En El Pase → copia tu **código de membresía** (botón Copiar) → **Reservar** en una función.
+2. En el checkout pulsa **"Use membership code"**, pega el código → aparece **"Planta Baja - El
+   Pase" a $0** (sin código solo salen los boletos regulares a $30: TT no reconoce al abonado por
+   correo). Escógelo, elige butaca, confirma. `max_per_order=1`: una butaca por reserva.
+3. **Preaplicación por URL: ya probada, NO funciona (V21 FALLA).** `?membership_code=`, `?code=`
+   y `?membership=` no hacen nada; solo vale el botón "Use membership code". Si TT documenta un
+   parámetro nuevo, pruébalo aquí y actualiza V21.
+4. Llega `ORDER.CREATED` con `total = 0` y el ticket type del pase → `pass_redemptions` + relectura
+   de TT → el perfil muestra **7 / 8** y la función como *Reservada*.
+5. Corre **V22** en `/admin`: PASA si el webhook de la orden a $0 trae el ticket type del pase.
+
+Cosas que vale la pena romper a propósito (deben acabar en `/admin` como anomalía, no en silencio):
+- Intentar meter **2** boletos del pase en una canasta → `max_per_order` lo impide; si pasara,
+  `multi_ticket_redemption`.
+- Emitir una membresía **a mano** desde el dashboard a un correo nuevo y reservar con ella →
+  `redemption_without_pass` primero, y el lab importa la membresía como pase sin orden.
+
+## Paso 23 · 🧑 Agotar el pase — cierra V25
+
+Reserva funciones hasta llegar a **8 / 8**. Luego: (a) corre **V25** — lee `redemptions` e
+`is_valid` de la membresía y confirma que no hay `over_redemption`; (b) a mano, entra al checkout
+de otra función con ese abonado y confirma que **"Planta Baja - El Pase" ya no aparece**.
+
+Con la cuenta de prueba no hace falta pagar $256 ocho veces: el lab ya tiene un pase de demo
+enlazado a una membresía **real** (`im_159964`, jwvelez+probe@gmail.com) emitida por API.
+
 ---
 
 ## Paso 11 · Generar FINDINGS.md
@@ -182,3 +325,12 @@ Genera `FINDINGS.md` con: veredictos de las 12 verificaciones, nombres literales
 | V10 check-in | 🧑 paso 9 → 🤖 runner | dump checkins / issued_tickets |
 | V11 redirect | 🧑 paso 7 → 🤖 automático | gracias_hits + dump de la orden |
 | V12 holds | 🤖 runner | dump del POST + releído |
+| V13 punto reclamado+escaneo ★ | 🤖 runner | dump del escenario antes/después |
+| V14 sin reclamar no otorga ★ | 🤖 runner | dump con el reclamo tardío |
+| V15 dos boletos, un punto | 🤖 runner | dump del ledger |
+| V18 members only + seating ★ | 🧑 paso 18 → 🤖 runner | dump del ticket type members_only + Seated |
+| V21 preaplicar código por URL | 🧑 paso 22.3 (solo navegador) | **FALLA** documentada con las URLs probadas |
+| V22 orden $0 dispara webhook ★ | 🧑 paso 22 → 🤖 runner | **PASA**: redención real or_82725048 a $0 |
+| V23 alcance por API ★ | 🤖 runner | dump del POST + discount releído |
+| V24 monto fijo orden vs boleto ★ | 🧑 cuenta pagada → 🤖 runner | **FALLA** documentada: canasta 2×$10 → $0.00 |
+| V25 agotar la membresía | 🧑 paso 23 → 🤖 runner | dump de la membresía al límite |

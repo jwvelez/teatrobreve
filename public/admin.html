@@ -27,6 +27,34 @@
     <div id="loginLink" class="mono">— pide uno en /entrar —</div>
   </div>
 
+  <div class="card" id="anomaliasCard" style="display:none; border:2px solid var(--danger)">
+    <div class="section-title" style="margin-top:0; color:var(--danger)">⚠ Anomalías de El Pase — <span id="anomaliasCount">0</span> abiertas</div>
+    <p class="subtext" style="margin-bottom:12px">Cosas que NO deberían pasar según el modelo (TT hace cumplir el acceso; esta base es espejo). No se arreglan en silencio: se leen, se entienden y se marcan resueltas a mano.</p>
+    <div style="overflow-x:auto"><table class="data" id="anomalias"></table></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title" style="margin-top:0">El Pase · productos</div>
+    <p class="subtext" style="margin-bottom:12px">Un pase = un <b>membership type</b> + un <b>producto</b> (fulfilment "Issue a membership") + un <b>ticket type</b> $0 "Members only" con butacas del chart. Todo se crea a mano en el dashboard de TT; aquí se enlaza y se valida contra el API antes de guardar.</p>
+    <form id="paseForm" class="mono" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:8px; font-size:12px">
+      <input name="id" placeholder="slug (pase-2026-baja)" required>
+      <input name="name" placeholder="nombre (El Pase · Planta Baja)" required>
+      <select name="planta"><option value="baja">planta baja</option><option value="alta">planta alta</option></select>
+      <input name="tt_product_id" placeholder="pr_xxxxx (producto)" required>
+      <input name="membership_type_id" placeholder="mt_xxxx (membership type)" required>
+      <input name="ticket_type_id" placeholder="tt_xxxxxxx (boleto $0 members only)" required>
+      <input name="store_url" placeholder="URL de compra del producto (tienda de TT)" style="grid-column:1/-1">
+      <button type="submit" class="btn-small" style="grid-column:1/-1">Validar y guardar</button>
+    </form>
+    <div id="paseFormResult" class="mono" style="font-size:11px; margin-top:8px"></div>
+    <div style="overflow-x:auto; margin-top:12px"><table class="data" id="paseProductos"></table></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title" style="margin-top:0">El Pase · pases emitidos <button class="btn-small" id="refrescarPases" style="margin-left:8px">Releer contadores de TT</button></div>
+    <div style="overflow-x:auto"><table class="data" id="pases"></table></div>
+  </div>
+
   <div class="card">
     <div class="section-title" style="margin-top:0">Verificaciones</div>
     <p class="subtext" style="margin-bottom:12px">Regla de oro: nada se marca PASA sin dump que lo evidencie. "Correr" ejecuta el runner automático; las que dependen de pasos manuales (dashboard, compra, escaneo) evalúan la evidencia acumulada — ver TESTPLAN.md.</p>
@@ -142,7 +170,84 @@ async function loadLoginLink() {
   }
 }
 
-function refresh() { loadStatus(); loadVerifications(); loadWebhooks(); loadDiscovery(); loadLoginLink(); }
+// ---------- El Pase ----------
+async function loadAnomalias() {
+  const rows = await j('/api/pase/anomalias');
+  const card = document.getElementById('anomaliasCard');
+  document.getElementById('anomaliasCount').textContent = rows.length;
+  card.style.display = rows.length ? '' : 'none';
+  document.title = (rows.length ? `⚠ ${rows.length} · ` : '') + 'Panel de hallazgos · tb-ticketing-lab';
+  document.getElementById('anomalias').innerHTML = rows.length
+    ? `<tr><th>Detectada</th><th>Tipo</th><th>Pase</th><th>Detalle</th><th></th></tr>` + rows.map(a => `<tr>
+        <td class="mono">${a.detected_at}</td>
+        <td class="mono" style="color:var(--danger); font-weight:700">${a.kind}</td>
+        <td class="mono">${a.season_pass_id ? '#' + a.season_pass_id : '—'}<br><span style="font-size:10px">${a.email ?? ''}</span></td>
+        <td class="mono" style="font-size:10px; max-width:420px; word-break:break-all">${typeof a.detail === 'string' ? a.detail : JSON.stringify(a.detail)}</td>
+        <td><button class="btn-small" onclick="resolverAnomalia(${a.id})">Resuelta</button></td>
+      </tr>`).join('')
+    : '';
+}
+async function resolverAnomalia(id) {
+  if (!confirm('¿Marcar como resuelta? Solo después de entender qué pasó.')) return;
+  await fetch('/api/pase/anomalias/' + id + '/resolver', { method: 'POST' });
+  loadAnomalias();
+}
+
+async function loadPaseProductos() {
+  const rows = await j('/api/pase/productos');
+  document.getElementById('paseProductos').innerHTML = rows.length
+    ? `<tr><th>slug</th><th>Nombre</th><th>Planta</th><th>Producto</th><th>Membership</th><th>Ticket type</th><th>Precio</th><th>Funciones</th><th>Vence</th><th>Compra</th></tr>` +
+      rows.map(p => `<tr>
+        <td class="mono">${p.id}${p.active ? '' : ' (inactivo)'}</td><td>${p.name}</td><td>${p.planta}</td>
+        <td class="mono">${p.tt_product_id}</td><td class="mono">${p.membership_type_id}</td><td class="mono">${p.ticket_type_id}<br><span style="font-size:10px">${p.show_id ?? ''}</span></td>
+        <td class="mono">${p.price_cents != null ? '$' + (p.price_cents / 100).toFixed(2) : '—'}</td>
+        <td class="mono">${p.max_redemptions ?? '∞'}</td><td class="mono">${p.season_end ? p.season_end.slice(0, 10) : '—'}</td>
+        <td>${p.store_url ? `<a class="mono" href="${p.store_url}" target="_blank">tienda</a>` : '<span style="color:var(--danger)">falta</span>'}</td>
+      </tr>`).join('')
+    : '<tr><td class="subtext">Ningún pase configurado. Llena el formulario de arriba.</td></tr>';
+}
+
+async function loadPases() {
+  const rows = await j('/api/pase/pases');
+  document.getElementById('pases').innerHTML = rows.length
+    ? `<tr><th>#</th><th>Abonado</th><th>Pase</th><th>Estado</th><th>Saldo</th><th>Membresía</th><th>Orden</th><th>Vence</th><th>Última lectura</th><th></th></tr>` +
+      rows.map(p => `<tr ${p.anomalias ? 'style="background:rgba(242,109,75,.08)"' : ''}>
+        <td class="mono">${p.id}</td>
+        <td>${p.email}<br><span class="subtext" style="font-size:11px">${p.customer_name ?? ''}</span></td>
+        <td>${p.product_name} <span class="mono" style="font-size:10px">(${p.planta})</span></td>
+        <td><span class="status-pill st-${{ active: 'PASA', exhausted: 'PARCIAL', pending: 'PENDIENTE', expired: 'FALLA', voided: 'FALLA' }[p.status] ?? 'PENDIENTE'}">${p.status}</span>${p.anomalias ? ` <span style="color:var(--danger)">⚠ ${p.anomalias}</span>` : ''}</td>
+        <td class="mono">${p.redemptions ?? 0} / ${p.max_redemptions ?? '∞'} · quedan <b>${p.remaining ?? '∞'}</b></td>
+        <td class="mono" style="font-size:10px">${p.issued_membership_id ?? '— (pendiente)'}<br>${p.membership_code ?? ''}</td>
+        <td class="mono" style="font-size:10px">${p.order_id ?? '—'}</td>
+        <td class="mono">${p.valid_to ? p.valid_to.slice(0, 10) : '—'}</td>
+        <td class="mono" style="font-size:10px">${p.last_synced_at ?? '—'}</td>
+        <td><button class="btn-small" onclick="refrescarPase(${p.id})">Releer</button></td>
+      </tr>`).join('')
+    : '<tr><td class="subtext">Nadie ha comprado un pase todavía.</td></tr>';
+}
+async function refrescarPase(id) { await fetch('/api/pase/pases/' + id + '/refrescar', { method: 'POST' }); loadPases(); loadAnomalias(); }
+
+document.getElementById('refrescarPases').addEventListener('click', async () => {
+  await fetch('/api/pase/refrescar', { method: 'POST' }); loadPases(); loadAnomalias();
+});
+
+document.getElementById('paseForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  const out = document.getElementById('paseFormResult');
+  out.innerHTML = 'Validando contra TT…';
+  const r = await fetch('/api/pase/productos', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const res = await r.json();
+  out.innerHTML = [
+    res.ok ? `<div style="color:var(--accent)">✅ guardado: ${res.product.id}</div>` : `<div style="color:var(--danger)">❌ NO guardado</div>`,
+    ...(res.errors ?? []).map(x => `<div style="color:var(--danger)">· ${x}</div>`),
+    ...(res.warnings ?? []).map(x => `<div style="color:#E6B450">⚠ ${x}</div>`),
+    res.dumpPath ? `<a href="${res.dumpPath}" target="_blank">dump de la validación</a>` : '',
+  ].join('');
+  if (res.ok) loadPaseProductos();
+});
+
+function refresh() { loadStatus(); loadVerifications(); loadWebhooks(); loadDiscovery(); loadLoginLink(); loadAnomalias(); loadPaseProductos(); loadPases(); }
 refresh();
 setInterval(refresh, 20_000);
 </script>

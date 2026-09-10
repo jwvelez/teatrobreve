@@ -46,6 +46,9 @@
     display: flex; align-items: center; justify-content: center; overflow: hidden;
   }
   .ticket-card .qr img { width: 100%; height: 100%; object-fit: contain; }
+  /* Thumbnail del show en la tarjeta; el QR solo en "Ver boleto" */
+  .ticket-card .thumb { width: 74px; height: 74px; border-radius: 8px; background: var(--surface-2); flex: 0 0 auto; overflow: hidden; }
+  .ticket-card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .ticket-card .info { flex: 1 1 auto; min-width: 0; }
   .ticket-card .title { font-weight: 600; font-size: 16px; }
   .ticket-card .meta { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin-top: 4px; }
@@ -89,6 +92,57 @@
   .empty-note { color: var(--text-dim); padding: 20px 0; font-size: 14px; }
   .empty-note a { color: var(--accent); }
 
+  /* Reparto del corillo */
+  .share-tag { font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 999px; margin-left: 8px; white-space: nowrap; }
+  .share-tag.mio { background: var(--accent); color: #0B1211; }
+  .share-tag.enviado { background: transparent; border: 1px solid var(--text-dim); color: var(--text-dim); }
+  .share-tag.reclamado { background: var(--surface-2); color: var(--text); }
+  .ticket-card .action { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+  .repartir { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); text-decoration: none; text-align: center; padding: 6px 0; }
+  .linkact { background: none; border: none; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); cursor: pointer; padding: 6px 0; min-height: 32px; }
+  .linkact:disabled { opacity: 0.5; cursor: default; }
+  .ticket-extra { margin: -6px 0 12px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--surface-2); border-top: 0; border-radius: 0 0 12px 12px; }
+  .tk-inline { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tk-inline input { flex: 1 1 220px; min-height: 44px; padding: 0 13px; border-radius: 10px; background: var(--bg); border: 1px solid var(--surface-2); color: var(--text); font-family: var(--font-body); font-size: 15px; }
+  .tk-inline input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .tk-note { font-size: 12px; color: var(--text-dim); margin-top: 8px; min-height: 16px; }
+  .tk-note.ok { color: var(--accent); }
+  .tk-note.err { color: var(--danger); }
+
+  /* Puntos */
+  .pts-hero { background: var(--surface); border: 1px solid var(--surface-2); border-radius: 12px; padding: 24px; margin-bottom: 20px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  .pts-num { font-size: clamp(38px, 8vw, 56px); font-weight: 700; line-height: 1; color: var(--accent); }
+  .pts-lbl { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim); margin-top: 6px; }
+  .pts-how { font-size: 13px; color: var(--text-dim); line-height: 1.5; flex: 1 1 240px; }
+
+  /* El Pase */
+  .pase-card { background: var(--surface); border: 1px solid var(--surface-2); border-radius: 12px; padding: 22px; margin-bottom: 20px; }
+  .pase-card.pend { border-color: var(--accent); }
+  .pase-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .pase-name { font-size: clamp(20px, 4vw, 26px); font-weight: 700; letter-spacing: -0.02em; }
+  .pase-sub { font-size: 13px; color: var(--text-dim); margin-top: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .pase-pill { font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-dim); }
+  .pase-pill.on { background: var(--accent); color: #0B1211; }
+  .pase-pill.off { border: 1px solid var(--danger); color: var(--danger); background: transparent; }
+  .pase-saldo { text-align: right; flex: 0 0 auto; }
+  .pase-saldo .num { font-size: clamp(30px, 6vw, 44px); font-weight: 700; line-height: 1; color: var(--accent); }
+  .pase-saldo .lbl { font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim); margin-top: 4px; }
+  .pase-bar { height: 6px; border-radius: 999px; background: var(--surface-2); margin: 18px 0 8px; overflow: hidden; }
+  .pase-bar span { display: block; height: 100%; background: var(--accent); }
+  .pase-meta { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
+  .pase-code { font-family: var(--font-mono); font-size: 12px; color: var(--text); letter-spacing: 0.06em; }
+  .pase-codebox { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--bg); border: 1px dashed var(--accent); border-radius: 10px; padding: 14px 16px; margin-top: 16px; }
+  .pase-codebox .lbl { font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim); flex-basis: 100%; }
+  .pase-codebox .code { font-family: var(--font-mono); font-size: clamp(20px, 4vw, 26px); font-weight: 700; letter-spacing: 0.12em; color: var(--accent); }
+  .pase-codebox .btn-copy { background: transparent; border: 1px solid var(--surface-2); color: var(--text); border-radius: 8px; min-height: 36px; padding: 0 12px; font-size: 12px; cursor: pointer; }
+  .pase-steps { margin: 14px 0 0; padding-left: 18px; font-size: 13px; color: var(--text-dim); line-height: 1.6; max-width: 560px; }
+  .pase-steps strong { color: var(--text); }
+  .pase-nota { font-size: 12px; color: var(--text-dim); margin-top: 14px; max-width: 520px; line-height: 1.5; }
+  .pase-price { font-size: clamp(26px, 5vw, 34px); font-weight: 700; }
+  .pase-price small { font-size: 12px; color: var(--text-dim); font-weight: 400; margin-left: 6px; }
+  .fn-row.dim { opacity: 0.5; }
+  .fn-row .btn-buy:disabled { opacity: 0.4; cursor: not-allowed; }
+
   @media (max-width: 700px) {
     .body { grid-template-columns: 1fr; gap: 16px; }
     .menu { flex-direction: row; overflow-x: auto; padding-bottom: 6px; }
@@ -114,6 +168,14 @@ async function fetchAccount() {
   if (!r.ok) throw new Error('No se pudo cargar la cuenta');
   return r.json();
 }
+async function fetchPuntos() {
+  const r = await fetch('/api/perfil/puntos');
+  return r.ok ? r.json() : null;
+}
+async function fetchPase() {
+  const r = await fetch('/api/perfil/pase');
+  return r.ok ? r.json() : null;
+}
 async function updateProfile(data) {
   const r = await fetch('/api/perfil/datos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   return r.json();
@@ -126,7 +188,7 @@ async function updatePreferences(prefs) {
 const MESES_AB = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'];
 const DOW_AB = ['DOM','LUN','MAR','MIÉ','JUE','VIE','SÁB'];
 
-let state = { data: null, section: 'boletos', year: 'all', error: null };
+let state = { data: null, puntos: null, pase: null, section: 'boletos', year: 'all', error: null };
 
 function metaLine(t) {
   const parts = [];
@@ -136,11 +198,9 @@ function metaLine(t) {
     parts.push(`${DOW_AB[dt.getDay()]} ${d} ${MESES_AB[m-1]}`);
   }
   if (t.time) parts.push(fmt12(t.time));
-  if (t.planta) parts.push(t.planta.toUpperCase());
-  if (t.seat) {
-    const s = [t.seat.section, t.seat.row ? 'FILA ' + t.seat.row : null, t.seat.number].filter(Boolean).join(', ');
-    if (s) parts.push(s.toUpperCase());
-  }
+  // "PLANTA BAJA - MESA 23, ASIENTO 3": la etiqueta del asiento la trae el server (una sola fuente).
+  const lugar = [t.planta, t.seat?.label].filter(Boolean).join(' - ');
+  if (lugar) parts.push(lugar.toUpperCase());
   return parts.join(' · ');
 }
 function fmt12(hhmm) {
@@ -173,7 +233,7 @@ function render() {
     <div class="stats">
       <div class="stat"><div class="num">${stats.asistidos}</div><div class="lbl">Shows asistidos</div></div>
       <div class="stat"><div class="num">${stats.proximos}</div><div class="lbl">Boletos próximos</div></div>
-      <div class="stat"><div class="num" style="font-size:clamp(16px,3vw,22px)">${stats.favorito ?? '—'}</div><div class="lbl">Show favorito</div></div>
+      <div class="stat"><div class="num">${stats.puntos ?? 0}</div><div class="lbl">Puntos</div></div>
     </div>
 
     <div class="body">
@@ -184,10 +244,11 @@ function render() {
           <button data-s="historial" class="${state.section==='historial'?'active':''}">Historial</button>
           <button data-s="datos" class="${state.section==='datos'?'active':''}">Mis datos</button>
           <button data-s="correos" class="${state.section==='correos'?'active':''}">Correos y avisos</button>
-          <button disabled>Recompensas <span class="fase">fase 2</span></button>
+          <button data-s="puntos" class="${state.section==='puntos'?'active':''}">Mis puntos</button>
+          <button data-s="pase" class="${state.section==='pase'?'active':''}">El Pase${state.pase?.pass && state.pase.pass.status === 'active' ? ` <span class="fase" style="color:var(--accent)">${state.pase.pass.remaining ?? ''}</span>` : ''}</button>
         </nav>
       </div>
-      <div id="panel">${renderSection(upcoming, history, customer, preferences)}</div>
+      <div id="panel">${safeSection(upcoming, history, customer, preferences)}</div>
     </div>`;
 
   document.getElementById('salir').addEventListener('click', async e => {
@@ -201,17 +262,209 @@ function render() {
   bindSection();
 }
 
+// Estado de reparto visto desde quien mira la cuenta.
+function shareTag(t) {
+  const s = t.share;
+  if (!s) return '';
+  if (s.status === 'claimed') {
+    return s.mio
+      ? `<span class="share-tag mio">Reclamado por ti</span>`
+      : `<span class="share-tag reclamado">Reclamado por ${s.holderEmail}</span>`;
+  }
+  if (s.status === 'sent') return `<span class="share-tag enviado">Enviado a ${s.holderEmail}</span>`;
+  return `<span class="share-tag mio">Mío</span>`;
+}
+
+function renderPuntos(pts) {
+  const filas = pts.history.length
+    ? pts.history.map(h => `
+      <div class="hist-row">
+        <div class="d">${h.startsAt ? new Date(h.startsAt).toLocaleDateString('es-PR', { day:'numeric', month:'short', year:'numeric' }).toUpperCase() : '—'}</div>
+        <div class="t"><div class="name">${h.show}</div><div class="sub">Asististe y escanearon tu boleto</div></div>
+        <span class="tag si">+${h.points}</span>
+      </div>`).join('')
+    : `<div class="empty-note">Todavía no tienes puntos. Ve a un show y escanea tu boleto en la puerta.</div>`;
+
+  return `
+    <div class="section-head">Mis puntos</div>
+    <div class="pts-hero">
+      <div>
+        <div class="pts-num">${pts.total}</div>
+        <div class="pts-lbl">${pts.total === 1 ? 'punto' : 'puntos'}</div>
+      </div>
+      <div class="pts-how">
+        Ganas <strong>1 punto por función</strong> cuando escanean tu boleto en la puerta.
+        Si te enviaron un boleto, tienes que <strong>reclamarlo</strong> para que el punto sea tuyo.
+        Dos boletos de la misma función cuentan como un solo punto.
+      </div>
+    </div>
+    <div class="section-head" style="margin-top:28px">Cómo los ganaste</div>
+    ${filas}`;
+}
+
+function fmtMoney(cents) {
+  return cents == null ? '—' : `$${(cents / 100).toFixed(2)}`;
+}
+function plantaLabel(p) {
+  return p ? 'Planta ' + p.charAt(0).toUpperCase() + p.slice(1) : '';
+}
+function fmtDay(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return `${d.getDate()} ${MESES_AB[d.getMonth()]} ${d.getFullYear()}`;
+}
+function fnDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return `${DOW_AB[d.getDay()]} ${d.getDate()} ${MESES_AB[d.getMonth()]}`;
+}
+
+// "El Pase": pase de temporada sobre la membresía nativa de TT. El saldo viene de TT
+// (issued_membership.redemptions) vía nuestro server; el navegador nunca toca el API.
+function renderPase(p) {
+  if (!p) return `<div class="empty-note">Cargando tu pase…</div>`;
+
+  if (!p.pass) {
+    if (!p.buyable.length) return `<div class="section-head">El Pase</div><div class="empty-note">Todavía no hay pases de temporada a la venta.</div>`;
+    return `
+      <div class="section-head">El Pase · temporada</div>
+      ${p.buyable.map(b => `
+        <div class="pase-card">
+          <div class="pase-top">
+            <div>
+              <div class="pase-name">${b.name}</div>
+              <div class="pase-sub"><span class="pase-pill">${plantaLabel(b.planta)}</span> ${b.maxRedemptions ?? '—'} funciones · vence el ${fmtDay(b.seasonEnd)}</div>
+            </div>
+            <div class="pase-price">${fmtMoney(b.priceCents)}<small>+ IVU y cargos</small></div>
+          </div>
+          <p class="pase-nota">
+            Pagas una vez y vas a ${b.maxRedemptions ?? 'las'} funciones de la temporada. En cada función escoges
+            tu butaca en ${plantaLabel(b.planta)} como cualquier comprador — y te sale en cero.
+          </p>
+          <div style="margin-top:16px">
+            ${b.storeUrl
+              ? `<button class="btn btn-buy" data-comprar-pase="${b.id}" data-url="${b.storeUrl}">Comprar El Pase</button>`
+              : `<button class="btn btn-buy" disabled title="Falta configurar el enlace de compra">Comprar El Pase</button>
+                 <div class="pase-nota">El enlace de compra aún no está configurado (admin → El Pase → store_url).</div>`}
+          </div>
+        </div>`).join('')}`;
+  }
+
+  const s = p.pass;
+  if (s.pending) {
+    return `
+      <div class="section-head">El Pase</div>
+      <div class="pase-card pend">
+        <div class="pase-name">Estamos activando tu pase</div>
+        <p class="pase-nota">Tu compra de <strong>${s.name}</strong> está confirmada. Ticket Tailor está emitiendo tu membresía;
+        en un momento verás aquí tu saldo de funciones. Esta página se actualiza sola.</p>
+      </div>`;
+  }
+
+  const etiqueta = { active: 'Activo', exhausted: 'Agotado', expired: 'Vencido', voided: 'Cancelado' }[s.status] ?? s.status;
+  const pct = s.maxRedemptions ? Math.min(100, Math.round((s.redemptions / s.maxRedemptions) * 100)) : 0;
+  const funciones = s.eligible.length
+    ? s.eligible.map(f => `
+      <div class="fn-row ${!s.canRedeem && !f.alreadyRedeemed ? 'dim' : ''}">
+        <div class="d">${fnDate(f.startsAt)}</div>
+        <div class="t">
+          <div class="name">${f.show ?? 'Función'}</div>
+          <div class="sub">${f.alreadyRedeemed ? 'Ya reservaste tu butaca para esta función' : (s.canRedeem ? '$0 con tu código de membresía · butaca en ' + plantaLabel(s.planta) : 'Sin funciones disponibles en tu pase')}</div>
+        </div>
+        ${f.alreadyRedeemed
+          ? `<span class="tag si">Reservada</span>`
+          : `<button class="btn btn-buy" data-reservar="${f.id}" data-url="${f.checkoutUrl ?? ''}" ${s.canRedeem && f.checkoutUrl ? '' : 'disabled'}>Reservar</button>`}
+      </div>`).join('')
+    : `<div class="empty-note">No hay funciones próximas en esta temporada.</div>`;
+
+  const historial = s.history.length
+    ? s.history.map(h => `
+      <div class="hist-row">
+        <div class="d">${fnDate(h.startsAt)}</div>
+        <div class="t"><div class="name">${h.show ?? 'Función'}</div><div class="sub">${h.seat ? `<strong>${h.seat}</strong> · ` : ''}reservada con tu pase${h.ticketId ? ` · <a href="/mi-cuenta/boleto/${h.ticketId}" style="color:var(--accent)">ver boleto</a>` : ''}</div></div>
+        <span class="tag si">−1</span>
+      </div>`).join('')
+    : `<div class="empty-note">Todavía no has usado tu pase.</div>`;
+
+  return `
+    <div class="section-head">El Pase</div>
+    <div class="pase-card">
+      <div class="pase-top">
+        <div style="min-width:0">
+          <div class="pase-name">${s.name}</div>
+          <div class="pase-sub">
+            <span class="pase-pill ${s.status === 'active' ? 'on' : 'off'}">${etiqueta}</span>
+            <span class="pase-pill">${plantaLabel(s.planta)}</span>
+          </div>
+        </div>
+        <div class="pase-saldo">
+          <div class="num">${s.remaining ?? '∞'}</div>
+          <div class="lbl">${s.remaining === 1 ? 'función restante' : 'funciones restantes'}</div>
+        </div>
+      </div>
+      <div class="pase-bar"><span style="width:${pct}%"></span></div>
+      <div class="pase-meta">${s.redemptions} de ${s.maxRedemptions ?? '∞'} usadas${s.validTo ? ` · vence el ${fmtDay(s.validTo)}` : ''}</div>
+      ${s.status === 'active' && s.code ? `
+      <div class="pase-codebox">
+        <div class="lbl">Tu código de membresía · lo necesitas en cada reserva</div>
+        <span class="code" id="paseCode">${s.code}</span>
+        <button class="btn-copy" data-copy="${s.code}">Copiar</button>
+      </div>
+      <ol class="pase-steps">
+        <li>Dale <strong>Reservar</strong> en la función que quieras.</li>
+        <li>En el checkout pulsa <strong>“Use membership code”</strong> y pega tu código.</li>
+        <li>Aparece el boleto <strong>“${plantaLabel(s.planta)} - El Pase”</strong> a <strong>$0</strong> — solo lo ves tú. Escógelo, elige tu butaca y confirma.</li>
+      </ol>
+      <p class="pase-nota">Sin el código, el checkout solo muestra los boletos regulares a precio normal. Una butaca por reserva.</p>`
+      : `<p class="pase-nota">${s.status === 'exhausted'
+            ? 'Usaste todas las funciones de tu pase. Gracias por acompañarnos toda la temporada.'
+            : 'Este pase ya no está vigente.'}</p>`}
+    </div>
+
+    <div class="section-head" style="margin-top:28px">Funciones de la temporada</div>
+    ${funciones}
+
+    <div class="section-head" style="margin-top:28px">Lo que ya usaste</div>
+    ${historial}`;
+}
+
+// Si una sección revienta al pintarse, que se vea: un error silencioso deja el DOM
+// viejo y parece "un botón que no hace nada" (pasó con El Pase por un helper ausente).
+function safeSection(upcoming, history, customer, preferences) {
+  try {
+    return renderSection(upcoming, history, customer, preferences);
+  } catch (err) {
+    console.error('[cuenta] error pintando la sección', state.section, err);
+    return `<div class="empty-note" style="color:var(--danger)">No pudimos mostrar esta sección (${state.section}): ${String(err.message)}. Recarga la página; si sigue, avísanos.</div>`;
+  }
+}
+
 function renderSection(upcoming, history, customer, preferences) {
+  if (state.section === 'pase') return renderPase(state.pase);
+  if (state.section === 'puntos') {
+    return state.puntos ? renderPuntos(state.puntos) : `<div class="empty-note">Cargando puntos…</div>`;
+  }
   if (state.section === 'boletos') {
     const cards = upcoming.length
       ? upcoming.map(t => `
         <div class="ticket-card">
-          <div class="qr">${t.qr ? `<img src="${t.qr}" alt="QR del boleto">` : ''}</div>
+          <div class="thumb">${t.thumbnail ? `<img src="${t.thumbnail}" alt="">` : ''}</div>
           <div class="info">
-            <div class="title">${t.show}</div>
+            <div class="title">${t.show}${t.checkedIn ? `<span class="share-tag reclamado">Ya entraste</span>` : ''}${shareTag(t)}</div>
             <div class="meta">${metaLine(t)}</div>
           </div>
-          <div class="action"><a class="btn btn-buy" href="/mi-cuenta/boleto/${t.id}">Ver boleto</a></div>
+          <div class="action">
+            <a class="btn btn-buy" href="/mi-cuenta/boleto/${t.id}">Ver boleto</a>
+            ${t.share?.mio ? `<button class="linkact" data-enviarme="${t.id}">Enviármelo por email</button>` : ''}
+            ${t.share?.soyComprador && t.share?.status === 'owner' ? `<button class="linkact" data-enviar-otro="${t.id}">Enviar a otra persona</button>` : ''}
+          </div>
+        </div>
+        <div class="ticket-extra" id="extra-${t.id}" hidden>
+          <div class="tk-inline">
+            <input type="email" placeholder="correo de tu pana" data-otro-input="${t.id}">
+            <button class="btn btn-buy" data-otro-send="${t.id}">Enviar</button>
+          </div>
+          <div class="tk-note" data-note="${t.id}"></div>
         </div>`).join('')
       : `<div class="empty-note">No tienes boletos próximos. <a href="/">Ver la cartelera</a></div>`;
 
@@ -284,13 +537,47 @@ function histRow(t) {
       <div class="d">${histDate(t)}</div>
       <div class="t">
         <div class="name">${t.show}</div>
-        <div class="sub">${t.planta ?? ''}</div>
+        <div class="sub">${[t.planta, t.seat?.label].filter(Boolean).join(' - ')}</div>
       </div>
       ${tag}
     </div>`;
 }
 
 function bindSection() {
+  // El Pase: comprar y reservar abren el checkout de TT en el modal del sitio
+  document.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copiado ✓'; }
+    catch { b.textContent = 'Selecciónalo y cópialo'; }
+    setTimeout(() => { b.textContent = 'Copiar'; }, 2000);
+  }));
+  document.querySelectorAll('[data-comprar-pase]').forEach(b => b.addEventListener('click', () => openCheckoutModal(b.dataset.url)));
+  document.querySelectorAll('[data-reservar]').forEach(b => b.addEventListener('click', () => { if (b.dataset.url) openCheckoutModal(b.dataset.url); }));
+
+  // Próximos boletos: "Enviármelo por email" (copia al dueño) y "Enviar a otra persona" (reparto en línea)
+  const note = (id, type, text) => { const n = document.querySelector(`[data-note="${CSS.escape(id)}"]`); const x = document.getElementById(`extra-${id}`); if (n && x) { x.hidden = false; n.className = 'tk-note ' + type; n.textContent = text; } };
+  document.querySelectorAll('[data-enviarme]').forEach(b => b.addEventListener('click', async () => {
+    const id = b.dataset.enviarme; b.disabled = true; b.textContent = 'Enviando…';
+    const r = await fetch(`/api/boletos/${encodeURIComponent(id)}/enviarme`, { method: 'POST' });
+    const j = await r.json();
+    note(id, r.ok ? 'ok' : 'err', r.ok ? `Te enviamos el boleto a ${j.email}. (En el demo sale en la consola del server y en /api/ticket-email.)` : (j.error ?? 'No se pudo enviar'));
+    b.disabled = false; b.textContent = 'Enviármelo por email';
+  }));
+  document.querySelectorAll('[data-enviar-otro]').forEach(b => b.addEventListener('click', () => {
+    const x = document.getElementById(`extra-${b.dataset.enviarOtro}`);
+    if (x) { x.hidden = !x.hidden; if (!x.hidden) x.querySelector('input')?.focus(); }
+  }));
+  document.querySelectorAll('[data-otro-send]').forEach(b => b.addEventListener('click', async () => {
+    const id = b.dataset.otroSend;
+    const input = document.querySelector(`[data-otro-input="${CSS.escape(id)}"]`);
+    const email = input?.value.trim();
+    if (!email) { input?.focus(); return; }
+    b.disabled = true; b.textContent = 'Enviando…';
+    const r = await fetch(`/api/boletos/${encodeURIComponent(id)}/enviar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    const j = await r.json();
+    if (r.ok) { await load(); state.section = 'boletos'; render(); note(id, 'ok', `Boleto enviado a ${j.email}. Cuando lo reclame, pasa a su cuenta.`); }
+    else { note(id, 'err', j.error ?? 'No se pudo enviar'); b.disabled = false; b.textContent = 'Enviar'; }
+  }));
+
   const verTodo = document.getElementById('verTodo');
   if (verTodo) verTodo.addEventListener('click', () => { state.section = 'historial'; render(); });
 
@@ -321,9 +608,100 @@ function bindSection() {
   }
 }
 
+// ---------- modal de checkout (mismo widget oficial que la cartelera) ----------
+// El CSS (.checkout-overlay, .tt-checkout-stage2…) vive en styles.css. Aquí solo el
+// wiring: el shim TTEventPages debe existir ANTES de que cargue widget.js, si no el
+// paso 2 del checkout se abre en pestaña nueva.
+let overlayEl = null;
+let ticketModalEl = null;
+window.TTEventPages = {
+  modals: {
+    loadTicketModal(url) {
+      closeTicketModal();
+      ticketModalEl = document.createElement('div');
+      ticketModalEl.className = 'tt-checkout-stage2';
+      ticketModalEl.innerHTML = `<button class="stage2-close" aria-label="Cerrar">✕</button><iframe allow="payment" src="${url}"></iframe>`;
+      ticketModalEl.querySelector('.stage2-close').addEventListener('click', closeCheckoutModal);
+      document.body.appendChild(ticketModalEl);
+      document.body.style.overflow = 'hidden';
+    },
+  },
+};
+function closeTicketModal() { if (ticketModalEl) { ticketModalEl.remove(); ticketModalEl = null; } }
+
+// Pre-llenado oficial con la sesión del perfil: &preset_data=1#p[first_name]=..&p[email]=..
+function withPrefill(url) {
+  const c = state.data?.customer;
+  if (!c?.email) return url;
+  try {
+    const u = new URL(url, location.origin);
+    u.searchParams.set('preset_data', '1');
+    const name = String(c.name ?? '').trim();
+    const first = name.split(/\s+/)[0] ?? '';
+    const last = name.split(/\s+/).slice(1).join(' ');
+    const p = [];
+    if (first) p.push(`p[first_name]=${encodeURIComponent(first)}`);
+    if (last) p.push(`p[last_name]=${encodeURIComponent(last)}`);
+    p.push(`p[email]=${encodeURIComponent(c.email)}`);
+    u.hash = p.join('&');
+    return u.toString();
+  } catch { return url; }
+}
+
+function openCheckoutModal(url) {
+  if (!url) return;
+  url = withPrefill(url);
+  closeCheckoutModal();
+  overlayEl = document.createElement('div');
+  overlayEl.className = 'checkout-overlay';
+  overlayEl.innerHTML = `
+    <div class="checkout-modal" role="dialog" aria-modal="true" aria-label="Checkout">
+      <button class="modal-close floating" aria-label="Cerrar">✕</button>
+      <div class="widget-host"></div>
+    </div>`;
+  overlayEl.addEventListener('click', e => { if (e.target === overlayEl) closeCheckoutModal(); });
+  overlayEl.querySelector('.modal-close').addEventListener('click', closeCheckoutModal);
+  const host = overlayEl.querySelector('.widget-host');
+  const widget = document.createElement('div');
+  widget.className = 'tt-widget';
+  const fallback = document.createElement('div');
+  fallback.className = 'tt-widget-fallback';
+  fallback.innerHTML = `<p>Cargando checkout…</p>`;
+  widget.appendChild(fallback);
+  const s = document.createElement('script');
+  s.src = 'https://cdn.tickettailor.com/js/widgets/min/widget.js';
+  s.setAttribute('data-url', url);
+  s.setAttribute('data-type', 'inline');
+  s.setAttribute('data-event-page-widget', 'true');
+  s.setAttribute('data-inline-minimal', 'true');
+  s.setAttribute('data-inline-show-logo', 'false');
+  s.setAttribute('data-inline-bg-fill', 'true');
+  widget.appendChild(s);
+  host.appendChild(widget);
+  document.body.appendChild(overlayEl);
+  document.body.style.overflow = 'hidden';
+}
+
+function closeCheckoutModal() {
+  closeTicketModal();
+  if (overlayEl) { overlayEl.remove(); overlayEl = null; }
+  document.body.style.overflow = '';
+  document.querySelectorAll('iframe.tt-basket-overlay-iframe').forEach(f => f.remove());
+  // Al cerrar, refrescar: si compró o reservó, el webhook ya pudo haber llegado.
+  load();
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCheckoutModal(); });
+window.addEventListener('message', e => {
+  const t = e.data && e.data.type;
+  if (typeof t === 'string' && /^tt-.*close/.test(t)) closeCheckoutModal();
+});
+
 async function load() {
   try {
-    state.data = await fetchAccount();
+    const [data, puntos, pase] = await Promise.all([fetchAccount(), fetchPuntos(), fetchPase()]);
+    state.data = data;
+    state.puntos = puntos;
+    state.pase = pase;
     state.error = null;
   } catch (err) {
     if (err.message !== 'sesión') state.error = 'No pudimos cargar tu cuenta.';
@@ -336,8 +714,10 @@ load();
 // Refresco ligero: el perfil abierto se actualiza solo (compra en otra pestaña → aparece)
 setInterval(async () => {
   try {
-    const fresh = await fetchAccount();
+    const [fresh, puntos, pase] = await Promise.all([fetchAccount(), fetchPuntos(), fetchPase()]);
     state.data = fresh;
+    state.puntos = puntos;
+    state.pase = pase;
     // no re-render completo si el usuario está escribiendo en el form
     if (state.section !== 'datos') render();
   } catch { /* siguiente tick */ }

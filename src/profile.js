@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { seatOf, plantaOf } from './seat.js';
 
 /**
  * Perfil del cliente, calculado 100% desde SQLite (nunca del API de TT por request).
@@ -12,16 +13,21 @@ import { db } from './db.js';
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
 function ticketsOf(email) {
-  // Boletos por email del boleto O por email del comprador de la orden
+  // Boletos por email del boleto, por comprador de la orden, o por reparto del corillo
+  // (un boleto reclamado aparece en la cuenta de quien lo reclamó).
   return db.prepare(`
     SELECT it.*,
-           o2.starts_at, s.name AS show_name, s.id AS series_id,
-           ord.created_at AS order_created_at
+           o2.starts_at, s.name AS show_name, s.id AS series_id, s.thumbnail_url,
+           ord.created_at AS order_created_at, ord.customer_email AS buyer_email,
+           a.status AS share_status, a.holder_email
     FROM issued_tickets it
     LEFT JOIN occurrences o2 ON o2.id = it.occurrence_id
     LEFT JOIN shows s ON s.id = COALESCE(it.event_series_id, o2.show_id)
     LEFT JOIN orders ord ON ord.id = it.order_id
-    WHERE it.email = @email OR ord.customer_email = @email
+    LEFT JOIN ticket_assignments a ON a.issued_ticket_id = it.id
+    WHERE (a.status = 'claimed' AND a.holder_email = @email)
+       OR ((a.status IS NULL OR a.status != 'claimed')
+            AND (it.email = @email OR ord.customer_email = @email))
     ORDER BY o2.starts_at
   `).all({ email });
 }
@@ -31,19 +37,31 @@ function isPast(startsAt) {
   return new Date(startsAt) < new Date();
 }
 
-function shape(t) {
+function shape(t, viewerEmail) {
   const dt = t.starts_at ? new Date(t.starts_at) : null;
+  const soyComprador = t.buyer_email && viewerEmail && t.buyer_email.toLowerCase() === viewerEmail;
   return {
     id: t.id,
+    orderId: t.order_id,
+    // Estado de reparto visto desde quien mira: "Mío" / "Enviado a x" / "Reclamado por x"
+    share: {
+      status: t.share_status ?? 'owner',
+      holderEmail: t.holder_email,
+      soyComprador: Boolean(soyComprador),
+      // Un boleto reclamado por otro ya no es del comprador; uno reclamado por mí es mío.
+      mio: (t.share_status ?? 'owner') !== 'claimed'
+        ? Boolean(soyComprador) && (t.share_status ?? 'owner') === 'owner'
+        : t.holder_email?.toLowerCase() === viewerEmail,
+    },
     show: t.show_name ?? t.description ?? 'Show',
     date: t.starts_at ? t.starts_at.slice(0, 10) : null,
     time: t.starts_at && t.starts_at.length > 15 ? t.starts_at.slice(11, 16) : null,
     startsAt: t.starts_at,
-    planta: t.description ?? null,          // nombre del ticket type ("Planta Baja")
-    seat: t.seat_section || t.seat_row || t.seat_number
-      ? { section: t.seat_section, row: t.seat_row, number: t.seat_number }
+    planta: plantaOf(t.description),          // nombre del ticket type ("Planta Baja")
+    seat: seatOf(t) ? seatOf(t)
       : null,                                // reservation null en GA: degradar con gracia
     qr: t.qr_code_url,
+    thumbnail: t.thumbnail_url ?? null,      // imagen del show (la tarjeta no muestra el QR)
     status: t.status,                        // valid | voided
     checkedIn: Boolean(t.checked_in),
     voided: t.status === 'voided' || t.voided_at != null,
@@ -55,12 +73,16 @@ export function getProfile(email) {
   const customer = db.prepare('SELECT * FROM customers WHERE email = ?').get(email);
   if (!customer) return null;
 
-  const all = ticketsOf(email).map(shape);
+  const all = ticketsOf(email).map(t => shape(t, email));
   const upcoming = all.filter(t => !t.voided && t.startsAt && !isPast(t.startsAt));
   const pastTickets = all.filter(t => t.voided || (t.startsAt && isPast(t.startsAt)));
 
   // Stats
-  const asistidos = all.filter(t => !t.voided && isPast(t.startsAt) && t.checkedIn).length;
+  // El escaneo en puerta es la evidencia de asistencia, así que NO se exige que la
+  // función ya haya pasado: un boleto escaneado cuenta como asistido aunque la fecha
+  // sea futura (pasa al escanear temprano, y contarlo como "no asistió" es mentir).
+  // Es la misma regla que otorga el punto en loyalty_points.
+  const asistidos = all.filter(t => !t.voided && t.checkedIn).length;
   const proximos = upcoming.length;
 
   // Show favorito: serie con más boletos (no anulados); empate → función más reciente
@@ -91,10 +113,14 @@ export function getProfile(email) {
   const prefs = db.prepare('SELECT newsletter, show_reminders, offers FROM customer_prefs WHERE email = ?').get(email)
     ?? { newsletter: 1, show_reminders: 1, offers: 0 };
 
+  const puntos = db.prepare(
+    'SELECT COALESCE(SUM(points), 0) p FROM loyalty_points WHERE customer_id = ?'
+  ).get(customer.id).p;
+
   return {
     customer: { name: customer.name, email: customer.email, phone: customer.phone, desde },
     preferences: { newsletter: !!prefs.newsletter, showReminders: !!prefs.show_reminders, offers: !!prefs.offers },
-    stats: { asistidos, proximos, favorito: favorito?.name ?? null },
+    stats: { asistidos, proximos, favorito: favorito?.name ?? null, puntos },
     upcoming: upcoming.map(({ _dt, ...t }) => t),
     history: pastTickets
       .sort((a, b) => (b.startsAt ?? '').localeCompare(a.startsAt ?? ''))
@@ -105,7 +131,7 @@ export function getProfile(email) {
 export function getTicket(email, ticketId) {
   const t = ticketsOf(email).find(x => x.id === ticketId);
   if (!t) return null;
-  const s = shape(t);
+  const s = shape(t, email);
   let estado = 'Válido';
   if (s.voided) estado = 'Cancelado';
   else if (s.checkedIn) estado = 'Ya escaneado';

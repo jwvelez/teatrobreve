@@ -49,8 +49,8 @@ fetch('/api/perfil/boleto/' + encodeURIComponent(id))
       const [h, mm] = t.time.split(':').map(Number);
       meta.push(`${h % 12 === 0 ? 12 : h % 12}:${String(mm).padStart(2,'0')} ${h >= 12 ? 'PM' : 'AM'}`);
     }
-    if (t.planta) meta.push(t.planta.toUpperCase());
-    if (t.seat) meta.push([t.seat.section, t.seat.row ? 'FILA ' + t.seat.row : null, t.seat.number].filter(Boolean).join(', ').toUpperCase());
+    const lugar = [t.planta, t.seat?.label].filter(Boolean).join(' - ');
+    if (lugar) meta.push(lugar.toUpperCase());
     document.getElementById('t').innerHTML = `
       <div class="qr-panel ${estadoCls === 'cancelado' ? 'cancelado' : ''}">
         ${t.qr ? `<img src="${t.qr}" alt="Código QR del boleto">` : '<div class="noqr">QR no disponible</div>'}
